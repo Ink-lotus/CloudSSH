@@ -67,6 +67,24 @@
       </main>
     </div>
 
+    <!-- 桌面（登录后） -->
+    <div id="desktop" class="hidden fixed inset-0 overflow-hidden">
+      <div id="desktop-wallpaper" class="absolute inset-0"
+           style="background:radial-gradient(circle at 30% 20%, #1b2130, #0a0d14);"></div>
+      <div id="desktop-icons" class="absolute inset-0 p-4 flex flex-col flex-wrap gap-2 content-start"></div>
+      <div id="window-host" class="absolute inset-0" style="bottom:48px;"></div>
+      <div id="taskbar" class="absolute left-0 right-0 bottom-0 h-12 flex items-center gap-1 px-2 z-[9999]"
+           style="background:var(--bg-elevated,#0d1017);border-top:1px solid var(--border-strong,#2a2f3a);">
+        <button id="start-btn" class="px-3 h-9 flex items-center gap-2 text-sm">
+          <span class="material-symbols-outlined" style="font-size:18px;">apps</span>开始
+        </button>
+        <div id="taskbar-items" class="flex-1 flex items-center gap-1 overflow-x-auto"></div>
+        <div id="taskbar-clock" class="px-3 text-xs opacity-80"></div>
+      </div>
+      <div id="start-menu" class="hidden absolute bottom-12 left-2 w-64 z-[9999] p-2"
+           style="background:var(--bg-surface,#12151c);border:1px solid var(--border-strong,#2a2f3a);"></div>
+    </div>
+
     <!-- User Space Page (登录后) -->
     <div id="user-space-section" class="hidden min-h-screen flex-col bg-elevated text-on-surface">
       <!-- TopAppBar -->
