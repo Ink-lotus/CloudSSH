@@ -1,0 +1,15 @@
+{
+  "name": "atlas-ssh-console",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "零依赖的图形化 SSH 运维控制台原型",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test",
+    "check": "node --check server.mjs && node --check src/data.js && node --check src/app.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
