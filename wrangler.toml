@@ -1,0 +1,46 @@
+name = "cloudssh"
+main = "src/worker/index.ts"
+compatibility_date = "2026-07-01"
+workers_dev = true
+
+[vars]
+DEBUG_MODE = "false"
+
+# 构建监视路径：仅源代码变动时触发重新构建
+[build]
+watch_dir = "."
+
+# 下述注释的配置推荐采用环境变量的形式在 Cloudflare Dashboard 中直接添加：
+# - GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET（GitHub OAuth）
+# - TURNSTILE_SECRET / TURNSTILE_SITEKEY（Bot 验证）
+# - BASE_URL（OAuth 回调地址，需与实际域名一致）
+
+[[durable_objects.bindings]]
+name = "SSH_SESSION"
+class_name = "SSHSessionDO"
+
+[[durable_objects.bindings]]
+name = "USER_DB"
+class_name = "UserDBDO"
+
+# 建议从零部署：两个 DO 合并为单个 migration tag
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SSHSessionDO", "UserDBDO"]
+
+# ========== Test 环境 ==========
+# test 分支部署到独立 worker，共享 DO
+# 自定义域名请在 Cloudflare Dashboard 中手动绑定
+[env.test]
+name = "cloudssh-test"
+
+[env.test.vars]
+DEBUG_MODE = "true"
+
+[[env.test.durable_objects.bindings]]
+name = "SSH_SESSION"
+class_name = "SSHSessionDO"
+
+[[env.test.durable_objects.bindings]]
+name = "USER_DB"
+class_name = "UserDBDO"
