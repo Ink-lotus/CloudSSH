@@ -80,7 +80,7 @@ export class WindowManager {
     const rootEl = document.createElement('div');
     rootEl.className = 'wm-window';
     rootEl.style.cssText =
-      `position:absolute;left:${start.x}px;top:${start.y}px;width:${width}px;height:${height}px;` +
+      `position:absolute;pointer-events:auto;left:${start.x}px;top:${start.y}px;width:${width}px;height:${height}px;` +
       `min-width:${opts.minWidth ?? 320}px;min-height:${opts.minHeight ?? 200}px;` +
       `display:flex;flex-direction:column;background:var(--bg-surface,#12151c);` +
       `border:1px solid var(--border-strong,#2a2f3a);box-shadow:0 12px 40px rgba(0,0,0,.5);overflow:hidden;`;
