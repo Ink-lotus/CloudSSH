@@ -5,6 +5,9 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import { SearchAddon } from '@xterm/addon-search';
 import { TrzszFilter } from 'trzsz';
 import '@xterm/xterm/css/xterm.css';
+import { t } from './i18n';
+import { centerTerminalText } from './terminal-text';
+import { localizedSSHMessage } from './terminal-status';
 
 const TRZSZ_MAX_DATA_CHUNK_SIZE = 2 * 1024 * 1024;
 
@@ -317,14 +320,14 @@ export class SSHTerminal {
     box.className = 'cloudssh-search-box';
     box.style.display = 'none';
     box.innerHTML = `
-      <input type="text" class="cloudssh-search-input" placeholder="Search..." />
-      <button class="cloudssh-search-btn cloudssh-search-prev" title="Previous (Shift+Enter)">
+      <input type="text" class="cloudssh-search-input" placeholder="${t('terminal.searchPlaceholder')}" />
+      <button class="cloudssh-search-btn cloudssh-search-prev" title="${t('terminal.searchPrevious')}">
         <span class="material-symbols-outlined" style="font-size:16px;">arrow_upward</span>
       </button>
-      <button class="cloudssh-search-btn cloudssh-search-next" title="Next (Enter)">
+      <button class="cloudssh-search-btn cloudssh-search-next" title="${t('terminal.searchNext')}">
         <span class="material-symbols-outlined" style="font-size:16px;">arrow_downward</span>
       </button>
-      <button class="cloudssh-search-btn cloudssh-search-close" title="Close (Esc)">
+      <button class="cloudssh-search-btn cloudssh-search-close" title="${t('terminal.searchClose')}">
         <span class="material-symbols-outlined" style="font-size:16px;">close</span>
       </button>
     `;
@@ -428,7 +431,7 @@ export class SSHTerminal {
     }
 
     const termStatus = document.getElementById('term-status');
-    if (termStatus) termStatus.innerHTML = '<div class="w-2 h-2 bg-primary-container animate-pulse"></div> Connected';
+    if (termStatus) termStatus.innerHTML = `<div class="w-2 h-2 bg-primary-container animate-pulse"></div> ${t('terminal.connecting')}`;
 
     const wsUrl = new URL(window.location.href);
     wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -444,7 +447,7 @@ export class SSHTerminal {
       this.ws.binaryType = 'arraybuffer';
 
       this.ws.onopen = () => {
-        this.terminal.writeln('\x1b[32m[+] WebSocket connected, sending credentials...\x1b[0m');
+        this.terminal.writeln(`\x1b[32m[+] ${t('terminal.wsSendingCredentials')}\x1b[0m`);
         this.ws?.send(JSON.stringify({
           host: config.host,
           port: config.port,
@@ -461,7 +464,7 @@ export class SSHTerminal {
       };
 
       this.ws.onerror = () => {
-        reject(new Error('WebSocket connection failed'));
+        reject(new Error(t('terminal.wsFailed')));
       };
 
       this.setupWebSocketHandlers(reject);
@@ -477,10 +480,10 @@ export class SSHTerminal {
     this.showConnectingBanner();
 
     const termStatus = document.getElementById('term-status');
-    if (termStatus) termStatus.innerHTML = '<div class="w-2 h-2 bg-primary-container animate-pulse"></div> Connected';
+    if (termStatus) termStatus.innerHTML = `<div class="w-2 h-2 bg-primary-container animate-pulse"></div> ${t('terminal.connecting')}`;
 
     ws.onopen = () => {
-      this.terminal.writeln('\x1b[32m[+] WebSocket connected, authenticating...\x1b[0m');
+      this.terminal.writeln(`\x1b[32m[+] ${t('terminal.wsAuthenticating')}\x1b[0m`);
       this.sendResize();
       this.startHeartbeat();
     };
@@ -534,18 +537,18 @@ export class SSHTerminal {
 
           switch (msg.type) {
             case 'status':
-              this.terminal.writeln(`\x1b[32m[*] ${msg.message}\x1b[0m`);
+              this.terminal.writeln(`\x1b[32m[*] ${localizedSSHMessage(msg.message, msg.event, msg.params)}\x1b[0m`);
               if (msg.event === 'auth_success' || msg.message === '认证成功') {
                 this.reconnectAttempts = 0;
                 const statusText = document.getElementById('status-text');
-                if (statusText) statusText.innerHTML = '<span class="w-2 h-2 bg-[var(--accent)] inline-block animate-pulse"></span> STATUS: ONLINE';
+                if (statusText) statusText.innerHTML = `<span class="w-2 h-2 bg-[var(--accent)] inline-block animate-pulse"></span> ${t('auth.statusOnline')}`;
               }
               if (msg.event === 'shell_ready' || msg.message === 'Shell 已就绪') {
                 this.onSessionReady?.();
               }
               break;
             case 'error':
-              this.terminal.writeln(`\x1b[31m[!] ${msg.message}\x1b[0m`);
+              this.terminal.writeln(`\x1b[31m[!] ${localizedSSHMessage(msg.message, msg.event, msg.params)}\x1b[0m`);
               break;
             case 'debug':
               this.terminal.writeln(`\x1b[90m[DEBUG] ${msg.message}\x1b[0m`);
@@ -580,12 +583,12 @@ export class SSHTerminal {
 
       this.stopHeartbeat();
       this.terminal.writeln(
-        `\x1b[33m[*] Connection closed (code=${event.code})\x1b[0m`
+        `\x1b[33m[*] ${t('terminal.connectionClosed', { code: event.code })}\x1b[0m`
       );
       const termStatus = document.getElementById('term-status');
-      if (termStatus) termStatus.innerHTML = '<div class="w-2 h-2 bg-[var(--error)]"></div> Disconnected';
+      if (termStatus) termStatus.innerHTML = `<div class="w-2 h-2 bg-[var(--error)]"></div> ${t('terminal.disconnected')}`;
       const statusText = document.getElementById('status-text');
-      if (statusText) statusText.innerHTML = '<span class="w-2 h-2 bg-surface-dot inline-block"></span> STATUS: OFFLINE';
+      if (statusText) statusText.innerHTML = `<span class="w-2 h-2 bg-surface-dot inline-block"></span> ${t('auth.statusOffline')}`;
       
       if (event.code === 1000) {
         this.onSessionClosed?.(event);
@@ -598,8 +601,8 @@ export class SSHTerminal {
     };
 
     this.ws.onerror = () => {
-      this.terminal.writeln('\x1b[31m[!] Connection error\x1b[0m');
-      if (rejectFn) rejectFn(new Error('WebSocket connection failed'));
+      this.terminal.writeln(`\x1b[31m[!] ${t('terminal.connectionError')}\x1b[0m`);
+      if (rejectFn) rejectFn(new Error(t('terminal.wsFailed')));
     };
 
     // User input goes through trzsz filter
@@ -684,9 +687,10 @@ export class SSHTerminal {
 
   private showConnectingBanner(): void {
     this.resetTerminalDisplay();
+    const bannerText = centerTerminalText(t('terminal.bannerConnecting'), 34);
     this.terminal.write(
       '\x1b[1;33m╔══════════════════════════════════╗\x1b[0m\r\n' +
-      '\x1b[1;33m║      Connecting to CloudSSH      ║\x1b[0m\r\n' +
+      `\x1b[1;33m║${bannerText}║\x1b[0m\r\n` +
       '\x1b[1;33m╚══════════════════════════════════╝\x1b[0m\r\n\r\n'
     );
   }
@@ -736,16 +740,16 @@ export class SSHTerminal {
     this.reconnectAttempts++;
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
     
-    this.terminal.writeln(`\x1b[33m[*] Reconnecting in ${delay / 1000}s (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})...\x1b[0m`);
+    this.terminal.writeln(`\x1b[33m[*] ${t('terminal.reconnectWait', { seconds: delay / 1000, attempt: this.reconnectAttempts, max: this.maxReconnectAttempts })}\x1b[0m`);
     
     this.reconnectTimeout = setTimeout(async () => {
       this.reconnectTimeout = null;
       if (this.lastConfig) {
-        this.terminal.writeln('\x1b[32m[+] Reconnecting...\x1b[0m');
+        this.terminal.writeln(`\x1b[32m[+] ${t('terminal.reconnecting')}\x1b[0m`);
         try {
           await this.connect(this.lastConfig, { resetDisplay: false });
         } catch (e) {
-          this.terminal.writeln('\x1b[31m[!] Reconnect failed\x1b[0m');
+          this.terminal.writeln(`\x1b[31m[!] ${t('terminal.reconnectFailed')}\x1b[0m`);
         }
       }
     }, delay);

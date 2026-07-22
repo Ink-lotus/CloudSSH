@@ -161,7 +161,7 @@ export class SSHSession {
   }
 
   async startHandshake(): Promise<void> {
-    this.sendStatus('正在交换版本信息...');
+    this.sendStatus('正在交换版本信息...', 'version_exchange');
     this.sendSFTPAttachUrl();
     this.state = 'version';
 
@@ -201,7 +201,7 @@ export class SSHSession {
         } else {
           const result = await reader.read();
           if (result.done) {
-            this.sendError('SSH 服务器断开连接 (Socket closed by remote)');
+            this.sendError('SSH 服务器断开连接 (Socket closed by remote)', 'remote_closed');
             this.close();
             break;
           }
@@ -249,7 +249,7 @@ export class SSHSession {
 
           if (versionFound) {
             this.versionRawBuffer = new Uint8Array(0);
-            this.sendStatus('版本交换完成，正在密钥协商...');
+            this.sendStatus('版本交换完成，正在密钥协商...', 'version_ready');
             this.state = 'kex';
             await this.startKEX();
 
@@ -398,7 +398,7 @@ export class SSHSession {
       } catch (e) {
         const errMsg = e instanceof Error ? e.message : String(e);
         this.sendDebug(`processPackets ERROR: ${errMsg}`);
-        this.sendError('数据包处理异常: ' + errMsg);
+        this.sendError('数据包处理异常: ' + errMsg, 'packet_error', { message: errMsg });
         this.close();
         return;
       }
@@ -410,7 +410,7 @@ export class SSHSession {
 
     // Transport-level messages handled regardless of state
     if (msgType === SSH_MSG_DISCONNECT) {
-      this.sendStatus('服务器断开连接');
+      this.sendStatus('服务器断开连接', 'remote_closed');
       this.close(true);
       return;
     }
@@ -487,7 +487,7 @@ export class SSHSession {
         this.keepaliveFailCount++;
         this.sendDebug(`Keepalive timeout (${this.keepaliveFailCount}/${this.maxKeepaliveFails})`);
         if (this.keepaliveFailCount >= this.maxKeepaliveFails) {
-          this.sendError('SSH 连接超时，保活失败');
+          this.sendError('SSH 连接超时，保活失败', 'keepalive_timeout');
           this.close();
           return;
         }
@@ -510,7 +510,7 @@ export class SSHSession {
             this.sendDebug(`Keepalive response timeout (${this.keepaliveFailCount}/${this.maxKeepaliveFails})`);
             this.keepalivePending = false;
             if (this.keepaliveFailCount >= this.maxKeepaliveFails) {
-              this.sendError('SSH 连接超时，保活失败');
+              this.sendError('SSH 连接超时，保活失败', 'keepalive_timeout');
               this.close();
             }
           }
@@ -519,7 +519,7 @@ export class SSHSession {
         this.keepaliveFailCount++;
         this.sendDebug(`Keepalive send failed (${this.keepaliveFailCount}/${this.maxKeepaliveFails}): ${e instanceof Error ? e.message : String(e)}`);
         if (this.keepaliveFailCount >= this.maxKeepaliveFails) {
-          this.sendError('SSH 连接超时，保活失败');
+          this.sendError('SSH 连接超时，保活失败', 'keepalive_timeout');
           this.close();
         }
       }
@@ -558,7 +558,7 @@ export class SSHSession {
           await this.sendKEXECDHInit();
         } catch (e) {
           const errMsg = e instanceof Error ? e.message : String(e);
-          this.sendError('算法协商失败: ' + errMsg);
+          this.sendError('算法协商失败: ' + errMsg, 'algorithm_error', { message: errMsg });
           this.close();
         }
         break;
@@ -589,7 +589,7 @@ export class SSHSession {
         } catch (e) {
           const errMsg = e instanceof Error ? e.message : String(e);
           this.sendDebug(`SERVICE_REQUEST failed: ${errMsg}`);
-          this.sendError('SERVICE_REQUEST 失败: ' + errMsg);
+          this.sendError('SERVICE_REQUEST 失败: ' + errMsg, 'service_error', { message: errMsg });
           this.close();
         }
         break;
@@ -683,16 +683,22 @@ export class SSHSession {
     // Compare against expected fingerprint if provided
     if (this.config.expectedFingerprint) {
       if (this.config.expectedFingerprint !== this.hostKeyFingerprint) {
-        this.sendError('主机密钥指纹变更！请确认是否为预期行为。');
-        this.sendError(`已知指纹: ${this.config.expectedFingerprint}`);
-        this.sendError(`实际指纹: ${this.hostKeyFingerprint} (${this.hostKeyType})`);
-        this.sendError('连接已阻断。如需信任新密钥，请在服务器列表中删除该服务器的已知主机记录后重试。');
+        this.sendError('主机密钥指纹变更！请确认是否为预期行为。', 'host_key_changed');
+        this.sendError(`已知指纹: ${this.config.expectedFingerprint}`, 'host_key_known', { fingerprint: this.config.expectedFingerprint });
+        this.sendError(`实际指纹: ${this.hostKeyFingerprint} (${this.hostKeyType})`, 'host_key_actual', {
+          fingerprint: this.hostKeyFingerprint,
+          keyType: this.hostKeyType,
+        });
+        this.sendError('连接已阻断。如需信任新密钥，请在服务器列表中删除该服务器的已知主机记录后重试。', 'host_key_trust_instruction');
         this.close();
         return;
       }
-      this.sendStatus(`主机密钥验证通过 (${this.hostKeyType}) ✓`);
+      this.sendStatus(`主机密钥验证通过 (${this.hostKeyType}) ✓`, 'host_key_accepted');
     } else {
-      this.sendStatus(`服务器指纹: ${this.hostKeyFingerprint} (${this.hostKeyType})（首次连接，已记录）`);
+      this.sendStatus(`服务器指纹: ${this.hostKeyFingerprint} (${this.hostKeyType})（首次连接，已记录）`, 'host_key_first_seen', {
+        fingerprint: this.hostKeyFingerprint,
+        keyType: this.hostKeyType,
+      });
     }
 
     // Verify host key signature to confirm exchange hash is correct
@@ -702,27 +708,27 @@ export class SSHSession {
       if (sigVerified === null) {
         this.sendDebug('Host key signature verification: UNSUPPORTED ALGORITHM');
         if (this.strictHostKeyVerify) {
-          this.sendError('主机密钥签名验证失败：不支持的密钥算法');
+          this.sendError('主机密钥签名验证失败：不支持的密钥算法', 'host_key_unsupported');
           this.close();
           return;
         }
-        this.sendStatus('主机密钥签名验证被跳过（暂不支持该算法）');
+        this.sendStatus('主机密钥签名验证被跳过（暂不支持该算法）', 'host_key_verify_skipped');
       } else {
         this.sendDebug(`Host key signature verification: ${sigVerified ? 'PASS' : 'FAIL'}`);
         if (!sigVerified) {
           if (this.strictHostKeyVerify) {
-            this.sendError('主机密钥签名验证失败，连接被阻断。如需跳过，请设置 STRICT_HOST_KEY_VERIFY=false');
+            this.sendError('主机密钥签名验证失败，连接被阻断。如需跳过，请设置 STRICT_HOST_KEY_VERIFY=false', 'host_key_signature_blocked');
             this.close();
             return;
           }
-          this.sendError('主机密钥签名验证失败 - 可能会有安全风险，但不阻断连接（严格模式已关闭）');
+          this.sendError('主机密钥签名验证失败 - 可能会有安全风险，但不阻断连接（严格模式已关闭）', 'host_key_signature_risk');
         }
       }
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
       this.sendDebug(`Signature verification error: ${errMsg}`);
       if (this.strictHostKeyVerify) {
-        this.sendError('主机密钥签名验证异常: ' + errMsg);
+        this.sendError('主机密钥签名验证异常: ' + errMsg, 'host_key_signature_error', { message: errMsg });
         this.close();
         return;
       }
@@ -991,7 +997,7 @@ export class SSHSession {
     let authRequest: Uint8Array;
 
     if (this.config.authMethod === 'publickey' && this.config.privateKey) {
-      this.sendStatus('正在使用密钥认证...');
+      this.sendStatus('正在使用密钥认证...', 'auth_public_key');
       authRequest = await SSHAuth.buildPublicKeyAuthRequest(
         this.config.username,
         this.config.privateKey,
@@ -1031,7 +1037,7 @@ export class SSHSession {
       }
 
       case SSH_MSG_SERVICE_ACCEPT:
-        this.sendStatus('认证服务已接受，正在认证...');
+        this.sendStatus('认证服务已接受，正在认证...', 'auth_service_accepted');
         await this.authenticate();
         break;
 
@@ -1043,7 +1049,7 @@ export class SSHSession {
         break;
 
       case SSH_MSG_USERAUTH_FAILURE:
-        this.sendError('认证失败：用户名或密码错误');
+        this.sendError('认证失败：用户名或密码错误', 'auth_failed');
         this.close();
         break;
 
@@ -1123,7 +1129,7 @@ export class SSHSession {
           this.sendDebug(`Exec channel open failed: channelID=${channelID}, reason=${reasonCode}, desc=${description}`);
         } else {
           // Shell channel failed - close connection
-          this.sendError('通道打开被拒绝');
+          this.sendError('通道打开被拒绝', 'channel_rejected');
           this.close();
         }
         break;
@@ -1179,7 +1185,7 @@ export class SSHSession {
           this.sftpHandler.dispose();
           this.sftpHandler = null;
         } else if (this.state === 'shell' || this.state === 'shell-requested') {
-          this.sendError('PTY 或 Shell 请求被拒绝');
+          this.sendError('PTY 或 Shell 请求被拒绝', 'pty_shell_rejected');
           this.close();
         }
         break;
@@ -1275,7 +1281,7 @@ export class SSHSession {
         const channelID = this.getChannelIDFromPayload(payload);
         if (channelID === this.shellChannel.getLocalChannelID()) {
           // Shell channel EOF - close connection
-          this.sendStatus('会话已结束');
+          this.sendStatus('会话已结束', 'session_ended');
           this.close(true);
         } else {
           // Other channel EOF
@@ -1298,7 +1304,7 @@ export class SSHSession {
         const channelID = this.getChannelIDFromPayload(payload);
         if (channelID === this.shellChannel.getLocalChannelID()) {
           // Shell channel closed - close connection
-          this.sendStatus('会话已结束');
+          this.sendStatus('会话已结束', 'session_ended');
           this.close(true);
         } else {
           // Other channel closed
@@ -1358,7 +1364,7 @@ export class SSHSession {
       }
 
       case SSH_MSG_DISCONNECT:
-        this.sendStatus('服务器断开连接');
+        this.sendStatus('服务器断开连接', 'remote_closed');
         this.close(true);
         break;
 
@@ -1393,7 +1399,7 @@ export class SSHSession {
         // agent_stop / agent_confirm 已由 durable-object.ts 在 webSocketMessage 入口
         // 提前拦截并通过 handleAgentControl 同步处理，不再到达此处。
         if (parsed.type === 'agent_start') {
-          await this.handleAgentStart(parsed.message, parsed.user_id);
+          await this.handleAgentStart(parsed.message, parsed.user_id, parsed.locale);
           return;
         }
 
@@ -1674,7 +1680,7 @@ export class SSHSession {
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       this.sendDebug(`flushChannelDataQueue ERROR: ${errMsg}`);
-      this.sendError('发送数据失败: ' + errMsg);
+      this.sendError('发送数据失败: ' + errMsg, 'send_data_failed', { message: errMsg });
       this.close();
     } finally {
       this.channelDataFlushInProgress = false;
@@ -1730,22 +1736,22 @@ export class SSHSession {
     } catch (error) {
       const errMsg = error instanceof Error ? error.message : String(error);
       this.sendDebug(`sendLocalWindowAdjust ERROR: ${errMsg}`);
-      this.sendError('发送窗口调整失败: ' + errMsg);
+      this.sendError('发送窗口调整失败: ' + errMsg, 'resize_failed', { message: errMsg });
       this.close();
     }
   }
 
-  private sendStatus(message: string, event?: string): void {
+  private sendStatus(message: string, event?: string, params?: Record<string, string | number>): void {
     try {
-      this.ws.send(JSON.stringify({ type: 'status', message, event }));
+      this.ws.send(JSON.stringify({ type: 'status', message, event, params }));
     } catch (e) {
       // WebSocket 已关闭，状态消息无法送达
     }
   }
 
-  private sendError(message: string): void {
+  private sendError(message: string, event?: string, params?: Record<string, string | number>): void {
     try {
-      this.ws.send(JSON.stringify({ type: 'error', message }));
+      this.ws.send(JSON.stringify({ type: 'error', message, event, params }));
     } catch (e) {
       // WebSocket 已关闭，错误消息无法送达
     }
@@ -1762,7 +1768,7 @@ export class SSHSession {
 
   // ==================== Agent Integration ====================
 
-  private async handleAgentStart(userMessage: string, userId?: string): Promise<void> {
+  private async handleAgentStart(userMessage: string, userId?: string, requestedLocale?: string): Promise<void> {
     if (this.state !== 'ready') {
       this.sendAgentFrame({ type: 'agent_frame', subType: 'error', message: 'SSH 连接未就绪' });
       return;
@@ -1796,7 +1802,8 @@ export class SSHSession {
       );
     }
 
-    void this.agentCore.handleAgentStart(effectiveUserId, userMessage);
+    const locale = requestedLocale === 'en-US' ? 'en-US' : 'zh-CN';
+    void this.agentCore.handleAgentStart(effectiveUserId, userMessage, locale);
   }
 
   /**
