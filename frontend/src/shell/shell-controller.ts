@@ -23,6 +23,7 @@ export class ShellController implements ShellContext {
     this.wm = new WindowManager(host);
     this.desktopShell = new DesktopShell(host, this.wm);
     this.mobileShell = new MobileShell(host, this.wm, this);
+    this.mobileShell.backRequest = () => this.handleBack();
     this.mode = resolveMode(readStoredSelection(), detectRuntimeMode());
     this.shell = this.mode === 'mobile' ? this.mobileShell : this.desktopShell;
 
@@ -59,11 +60,6 @@ export class ShellController implements ShellContext {
   handleBack(): void {
     const active = this.wm.getActiveId();
     if (!this.wm.handleBack(active) && active) this.wm.minimize(active); // 未消费 → 回主界面
-  }
-
-  /** 移动主界面键：隐藏所有窗口回主界面（窗口留后台，仍在切换器） */
-  goHome(): void {
-    for (const v of this.wm.listViews()) this.wm.minimize(v.id);
   }
 
   private setMode(next: Mode): void {
