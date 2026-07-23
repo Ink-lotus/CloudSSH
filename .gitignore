@@ -11,4 +11,5 @@ coverage/
 .claude/
 .agents/
 .codex/
+.superpowers/
 *.zip
