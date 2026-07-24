@@ -6,7 +6,7 @@ import { SearchAddon } from '@xterm/addon-search';
 import { TrzszFilter } from 'trzsz';
 import '@xterm/xterm/css/xterm.css';
 import { t } from './i18n';
-import { centerTerminalText } from './terminal-text';
+import { ConnectionOverlay } from './terminal-overlay';
 import { localizedSSHMessage } from './terminal-status';
 
 const TRZSZ_MAX_DATA_CHUNK_SIZE = 2 * 1024 * 1024;
@@ -169,6 +169,7 @@ export class SSHTerminal {
   private wsLatency: number | null = null;
   private onLatencyUpdated?: (cfLatency: number | null, cfColo: string | null, wsLatency: number | null) => void;
   private resizeListener: () => void;
+  private overlay: ConnectionOverlay | null = null;
 
   constructor(containerId: string) {
     this.container = document.getElementById(containerId)!;
@@ -427,7 +428,7 @@ export class SSHTerminal {
     this.lastConfig = config;
     this.canReconnect = true;
     if (options.resetDisplay !== false) {
-      this.showConnectingBanner();
+      this.showConnectingOverlay(t('terminal.bannerConnecting'));
     }
 
     const termStatus = document.getElementById('term-status');
@@ -447,7 +448,7 @@ export class SSHTerminal {
       this.ws.binaryType = 'arraybuffer';
 
       this.ws.onopen = () => {
-        this.terminal.writeln(`\x1b[32m[+] ${t('terminal.wsSendingCredentials')}\x1b[0m`);
+        this.overlay?.append(t('terminal.wsSendingCredentials'));
         this.ws?.send(JSON.stringify({
           host: config.host,
           port: config.port,
@@ -477,13 +478,13 @@ export class SSHTerminal {
     this.canReconnect = false;
     this.ws = ws;
     ws.binaryType = 'arraybuffer';
-    this.showConnectingBanner();
+    this.showConnectingOverlay(t('terminal.bannerConnecting'));
 
     const termStatus = document.getElementById('term-status');
     if (termStatus) termStatus.innerHTML = `<div class="w-2 h-2 bg-primary-container animate-pulse"></div> ${t('terminal.connecting')}`;
 
     ws.onopen = () => {
-      this.terminal.writeln(`\x1b[32m[+] ${t('terminal.wsAuthenticating')}\x1b[0m`);
+      this.overlay?.append(t('terminal.wsAuthenticating'));
       this.sendResize();
       this.startHeartbeat();
     };
@@ -537,17 +538,20 @@ export class SSHTerminal {
 
           switch (msg.type) {
             case 'status':
-              this.terminal.writeln(`\x1b[32m[*] ${localizedSSHMessage(msg.message, msg.event, msg.params)}\x1b[0m`);
+              this.overlay?.append(localizedSSHMessage(msg.message, msg.event, msg.params));
               if (msg.event === 'auth_success' || msg.message === '认证成功') {
                 this.reconnectAttempts = 0;
                 const statusText = document.getElementById('status-text');
                 if (statusText) statusText.innerHTML = `<span class="w-2 h-2 bg-[var(--accent)] inline-block animate-pulse"></span> ${t('auth.statusOnline')}`;
               }
               if (msg.event === 'shell_ready' || msg.message === 'Shell 已就绪') {
+                this.overlay?.dismiss();
+                this.overlay = null;
                 this.onSessionReady?.();
               }
               break;
             case 'error':
+              this.overlay?.error(localizedSSHMessage(msg.message, msg.event, msg.params));
               this.terminal.writeln(`\x1b[31m[!] ${localizedSSHMessage(msg.message, msg.event, msg.params)}\x1b[0m`);
               break;
             case 'debug':
@@ -585,6 +589,7 @@ export class SSHTerminal {
       this.terminal.writeln(
         `\x1b[33m[*] ${t('terminal.connectionClosed', { code: event.code })}\x1b[0m`
       );
+      this.overlay?.error(t('terminal.connectionClosed', { code: event.code }));
       const termStatus = document.getElementById('term-status');
       if (termStatus) termStatus.innerHTML = `<div class="w-2 h-2 bg-[var(--error)]"></div> ${t('terminal.disconnected')}`;
       const statusText = document.getElementById('status-text');
@@ -602,6 +607,7 @@ export class SSHTerminal {
 
     this.ws.onerror = () => {
       this.terminal.writeln(`\x1b[31m[!] ${t('terminal.connectionError')}\x1b[0m`);
+      this.overlay?.error(t('terminal.connectionError'));
       if (rejectFn) rejectFn(new Error(t('terminal.wsFailed')));
     };
 
@@ -685,14 +691,12 @@ export class SSHTerminal {
     this.terminal.write('\x1b[2J\x1b[3J\x1b[H');
   }
 
-  private showConnectingBanner(): void {
+  /** 创建（或重建）连接覆盖层并显示主状态文字 */
+  private showConnectingOverlay(text: string): void {
     this.resetTerminalDisplay();
-    const bannerText = centerTerminalText(t('terminal.bannerConnecting'), 34);
-    this.terminal.write(
-      '\x1b[1;33m╔══════════════════════════════════╗\x1b[0m\r\n' +
-      `\x1b[1;33m║${bannerText}║\x1b[0m\r\n` +
-      '\x1b[1;33m╚══════════════════════════════════╝\x1b[0m\r\n\r\n'
-    );
+    this.overlay?.dismiss();
+    this.overlay = new ConnectionOverlay(this.container);
+    this.overlay.connecting(text);
   }
 
   private stopHeartbeat(): void {
@@ -736,20 +740,21 @@ export class SSHTerminal {
 
   private scheduleReconnect(): void {
     this.clearReconnectTimeout();
-    
+
     this.reconnectAttempts++;
     const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts), 30000);
-    
-    this.terminal.writeln(`\x1b[33m[*] ${t('terminal.reconnectWait', { seconds: delay / 1000, attempt: this.reconnectAttempts, max: this.maxReconnectAttempts })}\x1b[0m`);
-    
+
+    if (!this.overlay) this.overlay = new ConnectionOverlay(this.container);
+    this.overlay.connecting(t('terminal.reconnectWait', { seconds: delay / 1000, attempt: this.reconnectAttempts, max: this.maxReconnectAttempts }));
+
     this.reconnectTimeout = setTimeout(async () => {
       this.reconnectTimeout = null;
       if (this.lastConfig) {
-        this.terminal.writeln(`\x1b[32m[+] ${t('terminal.reconnecting')}\x1b[0m`);
+        this.overlay?.append(t('terminal.reconnecting'));
         try {
           await this.connect(this.lastConfig, { resetDisplay: false });
         } catch (e) {
-          this.terminal.writeln(`\x1b[31m[!] ${t('terminal.reconnectFailed')}\x1b[0m`);
+          this.overlay?.error(t('terminal.reconnectFailed'));
         }
       }
     }, delay);
@@ -759,6 +764,8 @@ export class SSHTerminal {
     this.reconnectAttempts = this.maxReconnectAttempts;
     this.resetActiveConnection();
     this.lastConfig = null;
+    this.overlay?.dismiss();
+    this.overlay = null;
     this.resetTerminalDisplay();
   }
 
