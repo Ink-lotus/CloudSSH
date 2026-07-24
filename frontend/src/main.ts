@@ -28,7 +28,7 @@ function createTerminalWindowOnDesktop(
   document.getElementById('auth-section')!.classList.add('hidden');
   const d = getShell();
   d.show();
-  return createTerminalWindow(d.wm, opts);
+  return createTerminalWindow(d.wm, opts, d);
 }
 
 /** 未登录：显示匿名连接表单 */
@@ -46,7 +46,7 @@ function showDesktop(user: User): void {
   const d = getShell();
   d.show();
   d.registerApps([
-    { id: 'servers', title: t('server.list'), icon: 'dns', open: () => openServersWindow(d.wm, user, onLogout) },
+    { id: 'servers', title: t('server.list'), icon: 'dns', open: () => openServersWindow(d.wm, user, onLogout, d) },
     { id: 'settings', title: '设置', icon: 'settings', open: () => openSettingsWindow(d.wm, d) },
   ]);
 }
