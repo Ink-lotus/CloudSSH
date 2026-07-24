@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { enUS } from '../frontend/src/i18n/locales/en-US';
 import { zhCN } from '../frontend/src/i18n/locales/zh-CN';
-import { getAlternateLocale, normalizeLocale, resolveLocale, setLocale, t } from '../frontend/src/i18n';
+import { getAlternateLocale, normalizeLocale, resolveLocale, resolveAutoLocale, setLocale, t } from '../frontend/src/i18n';
 import { getResponseLanguageInstruction } from '../src/worker/agent/prompt';
 
 describe('国际化核心', () => {
@@ -37,6 +37,14 @@ describe('国际化核心', () => {
     expect(t('terminal.connectionClosed', { code: 1000 })).toBe('Connection closed (code=1000)');
     setLocale('zh-CN', { persist: false });
     expect(t('terminal.connectionClosed', { code: 1000 })).toBe('连接已关闭（代码=1000）');
+  });
+
+  it('自动模式匹配浏览器语言，无匹配回退英文', () => {
+    expect(resolveAutoLocale(['zh-CN'])).toBe('zh-CN');
+    expect(resolveAutoLocale(['en-GB'])).toBe('en-US');
+    expect(resolveAutoLocale(['ja-JP', 'en'])).toBe('en-US');
+    expect(resolveAutoLocale(['fr-FR'])).toBe('en-US');
+    expect(resolveAutoLocale([])).toBe('en-US');
   });
 
   it('英文 SFTP 工具栏使用紧凑操作标签', () => {

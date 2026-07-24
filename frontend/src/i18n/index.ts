@@ -64,6 +64,33 @@ export function getAlternateLocale(locale: Locale): Locale {
   return locale === 'zh-CN' ? 'en-US' : 'zh-CN';
 }
 
+export type LanguageSelection = 'auto' | Locale;
+export const SUPPORTED_LOCALES: readonly Locale[] = ['zh-CN', 'en-US'];
+
+/** 自动模式的语言解析：匹配浏览器语言，无匹配回退英文 */
+export function resolveAutoLocale(browserLocales: readonly string[] = []): Locale {
+  return browserLocales.map(normalizeLocale).find((l): l is Locale => l !== null) ?? 'en-US';
+}
+
+/** 读取当前语言选择（下拉框状态）：存储值为具体语言则返回之，否则视为自动 */
+export function readLanguageSelection(): LanguageSelection {
+  try {
+    const v = localStorage.getItem(STORAGE_KEY);
+    if (v === 'zh-CN' || v === 'en-US') return v;
+  } catch { /* storage disabled */ }
+  return 'auto';
+}
+
+/** 应用语言选择：auto 存字面量并按浏览器生效；具体语言持久化 */
+export function applyLanguageSelection(sel: LanguageSelection): void {
+  if (sel === 'auto') {
+    try { localStorage.setItem(STORAGE_KEY, 'auto'); } catch { /* storage disabled */ }
+    setLocale(resolveAutoLocale(navigator.languages), { persist: false });
+  } else {
+    setLocale(sel, { persist: true });
+  }
+}
+
 function localeSelfName(locale: Locale): string {
   return locale === 'zh-CN' ? zhCN['language.zhCN'] : enUS['language.enUS'];
 }
@@ -118,11 +145,13 @@ export function onLocaleChange(listener: (locale: Locale) => void): () => void {
 export function initI18n(): Locale {
   let storedLocale: string | null = null;
   try { storedLocale = localStorage.getItem(STORAGE_KEY); } catch { /* storage may be disabled */ }
-  const locale = resolveLocale({
-    urlLocale: new URLSearchParams(window.location.search).get('lang'),
-    storedLocale,
-    browserLocales: navigator.languages,
-  });
+  const locale = storedLocale === 'auto'
+    ? resolveAutoLocale(navigator.languages)
+    : resolveLocale({
+        urlLocale: new URLSearchParams(window.location.search).get('lang'),
+        storedLocale,
+        browserLocales: navigator.languages,
+      });
   currentLocale = locale;
   document.documentElement.lang = locale;
   mountLanguageSwitchers();
