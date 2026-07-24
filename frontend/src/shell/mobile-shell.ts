@@ -39,7 +39,7 @@ export class MobileShell implements Shell {
     chrome.innerHTML = `
       <div id="m-topbar" style="position:absolute;top:0;left:0;right:0;height:${TOP_H}px;display:flex;align-items:center;justify-content:center;font-size:12px;opacity:.6;z-index:50;pointer-events:none;"></div>
       <div id="m-home" style="position:absolute;top:${TOP_H}px;left:0;right:0;bottom:${BAR_H}px;z-index:10;display:grid;grid-template-columns:repeat(4,1fr);gap:22px 4px;align-content:start;padding:20px 14px;overflow-y:auto;pointer-events:auto;"></div>
-      <div id="m-switcher" class="hidden" style="position:absolute;top:${TOP_H}px;left:0;right:0;bottom:${BAR_H}px;z-index:60;background:rgba(6,9,14,.92);display:flex;gap:14px;align-items:center;overflow-x:auto;padding:20px;pointer-events:auto;"></div>
+      <div id="m-switcher" style="display:none;position:absolute;top:${TOP_H}px;left:0;right:0;bottom:${BAR_H}px;z-index:60;background:rgba(6,9,14,.92);gap:14px;align-items:center;overflow-x:auto;padding:20px;pointer-events:auto;"></div>
       <div id="m-bar" style="position:absolute;left:0;right:0;bottom:0;height:${BAR_H}px;z-index:70;display:flex;align-items:center;justify-content:space-around;background:var(--bg-elevated,#0d1017);border-top:1px solid var(--border-strong,#2a2f3a);pointer-events:auto;">
         <button id="m-task"     style="flex:1;height:100%;font-size:18px;background:transparent;">▢</button>
         <button id="m-home-btn" style="flex:1;height:100%;font-size:18px;background:transparent;">○</button>
@@ -83,7 +83,7 @@ export class MobileShell implements Shell {
       v.rootEl.style.display = v.id === activeId ? 'flex' : 'none';
     }
     if (this.homeEl) this.homeEl.style.display = activeId ? 'none' : 'grid';
-    if (this.switcherEl && !this.switcherEl.classList.contains('hidden')) this.renderSwitcher();
+    if (this.switcherEl && this.switcherEl.style.display !== 'none') this.renderSwitcher();
   }
 
   renderApps(apps: ShellApp[]): void {
@@ -103,7 +103,7 @@ export class MobileShell implements Shell {
 
   // ---- 三键行为 ----
   private onBack(): void {
-    if (this.switcherEl && !this.switcherEl.classList.contains('hidden')) { this.hideSwitcher(); return; }
+    if (this.switcherEl && this.switcherEl.style.display !== 'none') { this.hideSwitcher(); return; }
     this.backRequest();
   }
 
@@ -114,14 +114,14 @@ export class MobileShell implements Shell {
 
   private toggleSwitcher(): void {
     if (!this.switcherEl) return;
-    if (this.switcherEl.classList.contains('hidden')) {
-      this.switcherEl.classList.remove('hidden');
+    if (this.switcherEl.style.display === 'none') {
+      this.switcherEl.style.display = 'flex';
       this.renderSwitcher();
     } else {
       this.hideSwitcher();
     }
   }
-  private hideSwitcher(): void { this.switcherEl?.classList.add('hidden'); }
+  private hideSwitcher(): void { if (this.switcherEl) this.switcherEl.style.display = 'none'; }
 
   private renderSwitcher(): void {
     const el = this.switcherEl;
