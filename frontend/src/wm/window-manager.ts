@@ -87,7 +87,7 @@ export class WindowManager implements WindowActions {
     // 裸容器：定位/尺寸/可见性交给 Shell；默认隐藏，Shell renderWindow 后显示
     rootEl.style.cssText =
       'position:absolute;display:none;flex-direction:column;overflow:hidden;' +
-      'background:var(--bg-surface,#12151c);';
+      'background:var(--bg-surface,#12151c);pointer-events:auto;';
     const bodyEl = document.createElement('div');
     bodyEl.className = 'wm-body';
     bodyEl.style.cssText = 'flex:1;min-height:0;position:relative;overflow:hidden;';

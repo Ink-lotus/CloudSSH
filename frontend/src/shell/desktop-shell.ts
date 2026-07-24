@@ -108,6 +108,8 @@ export class DesktopShell implements Shell {
     };
 
     rootEl.style.display = 'flex';
+    rootEl.style.border = '1px solid var(--border-strong,#2a2f3a)';
+    rootEl.style.boxShadow = '0 12px 40px rgba(0,0,0,.5)';
     this.applyGeom(view.id);
   }
 
