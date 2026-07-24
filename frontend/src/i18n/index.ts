@@ -107,23 +107,6 @@ function syncLanguageSwitchers(): void {
   });
 }
 
-export function mountLanguageSwitchers(root: ParentNode = document): void {
-  root.querySelectorAll<HTMLElement>('[data-language-switcher]').forEach((container) => {
-    if (container.querySelector('[data-language-toggle]')) return;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.dataset.languageToggle = '';
-    button.className = 'language-toggle';
-    button.innerHTML = `
-      <span class="material-symbols-outlined language-toggle__icon" aria-hidden="true">language</span>
-      <span data-language-toggle-label></span>
-    `;
-    button.addEventListener('click', () => setLocale(getAlternateLocale(currentLocale)));
-    container.appendChild(button);
-  });
-  syncLanguageSwitchers();
-}
-
 export function setLocale(locale: Locale, options: { persist?: boolean } = {}): void {
   currentLocale = locale;
   if (typeof document !== 'undefined') {
@@ -154,7 +137,6 @@ export function initI18n(): Locale {
       });
   currentLocale = locale;
   document.documentElement.lang = locale;
-  mountLanguageSwitchers();
   translateDocument();
   return locale;
 }

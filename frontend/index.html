@@ -44,33 +44,7 @@
 </head>
 <body class="min-h-screen font-body text-sm">
   <div id="app">
-    <!-- Login Page (匿名连接) -->
-    <div id="auth-section" class="min-h-screen flex items-center justify-center p-6 relative overflow-y-auto">
-      <div class="scanlines"></div>
-      <div class="flicker"></div>
-      <main class="w-full max-w-md relative z-10">
-        <div class="mb-8 text-center">
-          <div class="text-3xl font-bold text-primary tracking-tighter mb-2">CloudSSH<span class="blinking-cursor"></span></div>
-        </div>
-        <div class="cyber-box p-6 shadow-2xl relative">
-          <div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-[var(--accent)] to-transparent opacity-50"></div>
-          <div class="flex items-center justify-between mb-8 pb-4 border-b border-dim">
-            <span class="text-xs font-bold tracking-[0.1em] text-[var(--accent-secondary)]" data-i18n="auth.connectionParameters">连接参数</span>
-            <div class="flex items-center gap-3">
-              <div data-language-switcher></div>
-              <span class="material-symbols-outlined text-[var(--accent-secondary)]" style="font-variation-settings: 'FILL' 0;">terminal</span>
-            </div>
-          </div>
-          <div id="connection-form-container"></div>
-        </div>
-        <div class="mt-8 text-center text-[13px] text-muted opacity-60" data-i18n="auth.systemReady">系统就绪，等待输入。</div>
-        <div class="mt-4 text-center">
-          <a href="https://github.com/newbietan/CloudSSH" class="text-[13px] text-primary opacity-60 hover:opacity-100 transition-colors tracking-widest uppercase">[ GitHub Open Source ]</a>
-        </div>
-      </main>
-    </div>
-
-    <!-- 桌面（登录后） -->
+    <!-- 桌面 -->
     <div id="desktop" class="hidden fixed inset-0 overflow-hidden">
       <div id="desktop-wallpaper" class="absolute inset-0"
            style="background:radial-gradient(circle at 30% 20%, #1b2130, #0a0d14);"></div>
@@ -96,7 +70,6 @@
           <h1 class="text-2xl font-bold text-primary-container tracking-tighter cursor-pointer" id="user-space-logo">CloudSSH</h1>
         </div>
         <div class="flex items-center gap-4 flex-wrap">
-          <div data-language-switcher></div>
           <div id="user-info" class="flex items-center gap-3">
             <!-- 动态渲染：头像 + 用户名 -->
           </div>

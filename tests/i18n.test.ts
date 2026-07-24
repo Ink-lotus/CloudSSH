@@ -67,13 +67,9 @@ describe('Agent 响应语言', () => {
 });
 
 describe('语言切换入口', () => {
-  it('仅在连接页和服务器列表展示，终端会话中不允许切换', () => {
+  it('语言切换已迁入设置 App，旧登录页与页面级切换器已移除', () => {
     const html = readFileSync(new URL('../frontend/index.html', import.meta.url), 'utf8');
-    const terminalSection = html.slice(html.indexOf('<div id="terminal-section"'));
-    const beforeTerminal = html.slice(0, html.indexOf('<div id="terminal-section"'));
-
-    expect(beforeTerminal.match(/data-language-switcher/g)).toHaveLength(2);
-    expect(terminalSection).not.toContain('data-language-switcher');
-    expect(beforeTerminal).not.toContain('data-language-select');
+    expect(html).not.toContain('data-language-switcher');
+    expect(html).not.toContain('id="auth-section"');
   });
 });
