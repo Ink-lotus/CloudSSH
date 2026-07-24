@@ -114,7 +114,7 @@ init()
 #### 1. 账户
 
 - **未登录（`user === null`）：** 显示"登录 GitHub"按钮，点击跳转 `/api/auth/github` OAuth 流程。无 Turnstile。
-- **已登录（`user !== null`）：** 显示 GitHub 头像 + 用户名 + "退出登录"按钮。退出登录调用 `POST /api/auth/logout`，成功后：设置页账户区切换为未登录态；若服务器 App 窗口已打开则切换为匿名模式；已打开的终端连接不受影响（SSH 会话独立于 GitHub 认证）。
+- **已登录（`user !== null`）：** 显示 GitHub 头像 + 用户名 + "退出登录"按钮。退出登录调用 `POST /api/auth/logout`，成功后：关闭所有已打开的窗口（终端连接、服务器管理等），将全局 `user` 置为 `null`，桌面回到匿名初始状态。
 
 #### 2. 语言
 
