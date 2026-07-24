@@ -6,6 +6,7 @@ import { AIConfigPanel } from './ai-config';
 import { initI18n, onLocaleChange, t } from './i18n';
 import { ShellController } from './shell/shell-controller';
 import { openServersWindow } from './apps/servers-app';
+import { openSettingsWindow } from './apps/settings-app';
 import { createTerminalWindow } from './apps/terminal-app';
 
 type User = { id: number; github_id: number; username: string; avatar_url: string };
@@ -46,6 +47,7 @@ function showDesktop(user: User): void {
   d.show();
   d.registerApps([
     { id: 'servers', title: t('server.list'), icon: 'dns', open: () => openServersWindow(d.wm, user, onLogout) },
+    { id: 'settings', title: '设置', icon: 'settings', open: () => openSettingsWindow(d.wm, d) },
   ]);
 }
 
