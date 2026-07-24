@@ -57,7 +57,7 @@ function openLoggedInServers(wm: WindowManager, user: User, onLogout: () => void
 
 /** 匿名模式：窗口内挂载精简快速连接表单 */
 function openAnonymousServers(wm: WindowManager, ctx?: ShellContext): void {
-  const win = wm.openWindow({ title: '服务器', icon: 'dns', width: 560, height: 620, minWidth: 380, minHeight: 400 });
+  const win = wm.openWindow({ title: '服务器', icon: 'dns', width: 560, height: 740, minWidth: 380, minHeight: 400 });
   serversWin = win;
 
   const container = document.createElement('div');
