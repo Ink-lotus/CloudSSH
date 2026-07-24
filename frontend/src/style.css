@@ -1221,3 +1221,12 @@ body.terminal-active {
   color: var(--on-surface-variant);
   opacity: 0.8;
 }
+
+/* ---- 移动外壳下的触屏可用性微调 ---- */
+#mobile-chrome #m-bar button { -webkit-tap-highlight-color: transparent; }
+.soft-key-bar button { min-width: 36px; min-height: 30px; }
+/* 服务器 modal 在窄屏可滚动、留安全边距 */
+@media (pointer: coarse) {
+  #server-modal .cyber-box { max-height: 88vh; overflow-y: auto; }
+  #server-space-host header { padding-left: 12px; padding-right: 12px; }
+}
