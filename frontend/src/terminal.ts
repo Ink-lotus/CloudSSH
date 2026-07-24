@@ -208,9 +208,19 @@ export class SSHTerminal {
 
     window.addEventListener('resize', this.resizeListener);
 
-    // Right-click paste support
+    // 右键：有选区则复制，无选区则粘贴
     this.container.addEventListener('contextmenu', async (e) => {
       e.preventDefault();
+      const selection = this.terminal.getSelection();
+      if (selection) {
+        try {
+          await navigator.clipboard.writeText(selection);
+          this.terminal.clearSelection();
+        } catch (err) {
+          console.error('Failed to copy selection', err);
+        }
+        return;
+      }
       try {
         const text = await navigator.clipboard.readText();
         if (text && this.ws?.readyState === WebSocket.OPEN) {
