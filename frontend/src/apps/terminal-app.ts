@@ -2,6 +2,8 @@ import { WindowManager, WindowHandle } from '../wm/window-manager';
 import { SSHTerminal } from '../terminal';
 import { SFTPPanel } from '../sftp-panel';
 import { notify } from '../ui-feedback';
+import type { ShellContext } from '../shell/types';
+import { createSoftKeyBar } from '../mobile/soft-key-bar';
 
 let seq = 0;
 
@@ -29,6 +31,7 @@ export interface CreateTerminalWindowOptions {
 export function createTerminalWindow(
   wm: WindowManager,
   opts: CreateTerminalWindowOptions,
+  ctx?: ShellContext,
 ): { terminal: SSHTerminal; win: WindowHandle } {
   const win = wm.openWindow({
     title: opts.name, icon: 'terminal',
@@ -61,8 +64,29 @@ export function createTerminalWindow(
   // 窗口缩放/最大化/还原 → 终端重排
   win.onResize(() => terminal.fit());
 
-  // 关窗清理（镜像 TabManager.closeTab）
+  // 软键盘辅助条：仅移动模式挂载，随模式变化增删
+  let keyBar: { el: HTMLElement; dispose: () => void } | null = null;
+  const mountKeyBar = () => {
+    if (keyBar) return;
+    keyBar = createSoftKeyBar(terminal);
+    win.bodyEl.appendChild(keyBar.el);
+    terminal.fit();
+  };
+  const unmountKeyBar = () => { keyBar?.dispose(); keyBar = null; terminal.fit(); };
+  const syncKeyBar = (mode: 'desktop' | 'mobile') => (mode === 'mobile' ? mountKeyBar() : unmountKeyBar());
+  let offMode: (() => void) | null = null;
+  if (ctx) { syncKeyBar(ctx.getMode()); offMode = ctx.onModeChange(syncKeyBar); }
+
+  // 上下文感知返回：SFTP 面板开→关面板回终端
+  win.onBack(() => {
+    if (sftp?.isVisible()) { sftp.hide(); return true; }
+    return false;
+  });
+
+  // 关窗清理
   win.onClose(() => {
+    offMode?.();
+    keyBar?.dispose();
     sftp?.dispose();
     sftp = null;
     terminal.disconnect();
@@ -85,12 +109,13 @@ export function createTerminalWindow(
 export function openTerminalFromWsUrl(
   wm: WindowManager,
   opts: { wsUrl: string; name: string; hostInfo?: { host: string; port: number } },
+  ctx?: ShellContext,
 ): void {
   if (!validateWsUrl(opts.wsUrl)) {
     notify('服务器返回了无效或不受信任的 WebSocket 地址。', { title: '无法建立连接', variant: 'danger' });
     return;
   }
-  const { terminal } = createTerminalWindow(wm, { name: opts.name, hostInfo: opts.hostInfo });
+  const { terminal } = createTerminalWindow(wm, { name: opts.name, hostInfo: opts.hostInfo }, ctx);
   const ws = new WebSocket(opts.wsUrl);
   ws.binaryType = 'arraybuffer';
   terminal.connectWithWebSocket(ws, opts.hostInfo);

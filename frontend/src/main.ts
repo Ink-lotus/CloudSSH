@@ -4,20 +4,21 @@ import type { WindowHandle } from './wm/window-manager';
 import { ConnectionForm } from './auth-form';
 import { AIConfigPanel } from './ai-config';
 import { initI18n, onLocaleChange, t } from './i18n';
-import { Desktop } from './desktop';
+import { ShellController } from './shell/shell-controller';
 import { openServersWindow } from './apps/servers-app';
+import { openSettingsWindow } from './apps/settings-app';
 import { createTerminalWindow } from './apps/terminal-app';
 
 type User = { id: number; github_id: number; username: string; avatar_url: string };
 
 // ==================== 桌面引导 ====================
 
-let desktop: Desktop | null = null;
+let shell: ShellController | null = null;
 let connectionForm: ConnectionForm | null = null;
 
-function getDesktop(): Desktop {
-  if (!desktop) desktop = new Desktop();
-  return desktop;
+function getShell(): ShellController {
+  if (!shell) shell = new ShellController();
+  return shell;
 }
 
 /** 隐藏登录页、显示桌面并创建终端窗口（注入给 ConnectionForm 的匿名连接使用） */
@@ -25,14 +26,14 @@ function createTerminalWindowOnDesktop(
   opts: { name: string; hostInfo?: { host: string; port: number } },
 ): { terminal: SSHTerminal; win: WindowHandle } {
   document.getElementById('auth-section')!.classList.add('hidden');
-  const d = getDesktop();
+  const d = getShell();
   d.show();
-  return createTerminalWindow(d.wm, opts);
+  return createTerminalWindow(d.wm, opts, d);
 }
 
 /** 未登录：显示匿名连接表单 */
 function showAuthSection(): void {
-  getDesktop().hide();
+  getShell().hide();
   document.getElementById('auth-section')!.classList.remove('hidden');
   if (!connectionForm) {
     connectionForm = new ConnectionForm({ createTerminalWindow: createTerminalWindowOnDesktop });
@@ -42,10 +43,11 @@ function showAuthSection(): void {
 /** 已登录：进入桌面，注册“服务器”App */
 function showDesktop(user: User): void {
   document.getElementById('auth-section')!.classList.add('hidden');
-  const d = getDesktop();
+  const d = getShell();
   d.show();
   d.registerApps([
-    { id: 'servers', title: t('server.list'), icon: 'dns', open: () => openServersWindow(d.wm, user, onLogout) },
+    { id: 'servers', title: t('server.list'), icon: 'dns', open: () => openServersWindow(d.wm, user, onLogout, d) },
+    { id: 'settings', title: '设置', icon: 'settings', open: () => openSettingsWindow(d.wm, d) },
   ]);
 }
 
