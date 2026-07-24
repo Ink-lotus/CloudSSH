@@ -1,58 +1,35 @@
 import { THEMES } from './terminal';
-import type { SSHTerminal } from './terminal';
-import type { WindowHandle } from './wm/window-manager';
-import { ConnectionForm } from './auth-form';
 import { AIConfigPanel } from './ai-config';
 import { initI18n, onLocaleChange, t } from './i18n';
 import { ShellController } from './shell/shell-controller';
 import { openServersWindow } from './apps/servers-app';
 import { openSettingsWindow } from './apps/settings-app';
-import { createTerminalWindow } from './apps/terminal-app';
 
 type User = { id: number; github_id: number; username: string; avatar_url: string };
 
 // ==================== 桌面引导 ====================
 
 let shell: ShellController | null = null;
-let connectionForm: ConnectionForm | null = null;
 
 function getShell(): ShellController {
   if (!shell) shell = new ShellController();
   return shell;
 }
 
-/** 隐藏登录页、显示桌面并创建终端窗口（注入给 ConnectionForm 的匿名连接使用） */
-function createTerminalWindowOnDesktop(
-  opts: { name: string; hostInfo?: { host: string; port: number } },
-): { terminal: SSHTerminal; win: WindowHandle } {
-  document.getElementById('auth-section')!.classList.add('hidden');
-  const d = getShell();
-  d.show();
-  return createTerminalWindow(d.wm, opts, d);
+/** 退出登录：关闭所有窗口（清理 SSH 会话）后刷新回匿名初始态 */
+function onLogout(): void {
+  getShell().wm.closeAll();
+  fetch('/api/auth/logout', { method: 'POST' }).finally(() => location.reload());
 }
 
-/** 未登录：显示匿名连接表单 */
-function showAuthSection(): void {
-  getShell().hide();
-  document.getElementById('auth-section')!.classList.remove('hidden');
-  if (!connectionForm) {
-    connectionForm = new ConnectionForm({ createTerminalWindow: createTerminalWindowOnDesktop });
-  }
-}
-
-/** 已登录：进入桌面，注册“服务器”App */
-function showDesktop(user: User): void {
-  document.getElementById('auth-section')!.classList.add('hidden');
+/** 进入桌面：匿名与登录用户都注册”服务器”和”设置”App（user 可为 null） */
+function showDesktop(user: User | null): void {
   const d = getShell();
   d.show();
   d.registerApps([
     { id: 'servers', title: t('server.list'), icon: 'dns', open: () => openServersWindow(d.wm, user, onLogout, d) },
-    { id: 'settings', title: '设置', icon: 'settings', open: () => openSettingsWindow(d.wm, d) },
+    { id: 'settings', title: '设置', icon: 'settings', open: () => openSettingsWindow(d.wm, d, user, onLogout) },
   ]);
-}
-
-function onLogout(): void {
-  fetch('/api/auth/logout', { method: 'POST' }).finally(() => location.reload());
 }
 
 // ==================== AI 配置面板（供 server-list 动态调用） ====================
@@ -166,16 +143,14 @@ async function init(): Promise<void> {
   const yearEl = document.getElementById('user-copyright-year');
   if (yearEl) yearEl.textContent = new Date().getFullYear().toString();
 
+  let user: User | null = null;
   try {
     const meRes = await fetch('/api/auth/me');
-    if (meRes.ok) {
-      showDesktop((await meRes.json()) as User);
-      return;
-    }
+    if (meRes.ok) user = (await meRes.json()) as User;
   } catch {
-    // /api/auth/me 失败 → 未登录，显示匿名连接表单
+    // 未登录，user 保持 null
   }
-  showAuthSection();
+  showDesktop(user);
 }
 
 init();
