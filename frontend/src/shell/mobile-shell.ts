@@ -72,6 +72,8 @@ export class MobileShell implements Shell {
     const el = view.rootEl;
     el.style.left = '0'; el.style.top = '0';
     el.style.width = '100%'; el.style.height = '100%';
+    // 尺寸变化后触发 resize 让 xterm fit()
+    this.actions.fireResize(view.id);
   }
 
   removeWindow(_id: string): void { /* 容器由 WM 移除；无每窗装饰需清理 */ }

@@ -24,6 +24,13 @@ export interface CreateTerminalWindowOptions {
   hostInfo?: { host: string; port: number };
 }
 
+/** 已打开的终端窗口（按 host:port 去重） */
+const openTerminals = new Map<string, WindowHandle>();
+
+function hostKey(hostInfo?: { host: string; port: number }): string | null {
+  return hostInfo ? `${hostInfo.host}:${hostInfo.port}` : null;
+}
+
 /**
  * 在桌面上打开一个终端窗口，装配 SSHTerminal 与 SFTPPanel，返回句柄。
  * 不负责建立连接——由调用者决定 connect(config)（匿名）或 connectWithWebSocket(ws)（服务器列表）。
@@ -37,6 +44,10 @@ export function createTerminalWindow(
     title: opts.name, icon: 'terminal',
     width: 760, height: 480, minWidth: 360, minHeight: 220,
   });
+
+  // 注册到去重 Map
+  const key = hostKey(opts.hostInfo);
+  if (key) openTerminals.set(key, win);
 
   // SSHTerminal 需要一个带 id 的容器
   const containerId = `term-host-${++seq}`;
@@ -70,9 +81,16 @@ export function createTerminalWindow(
     if (keyBar) return;
     keyBar = createSoftKeyBar(terminal);
     win.bodyEl.appendChild(keyBar.el);
+    // 给终端区域底部留出辅助条高度，避免内容被遮挡
+    const barH = keyBar.el.offsetHeight || 38;
+    mountEl.style.bottom = `${barH}px`;
     terminal.fit();
   };
-  const unmountKeyBar = () => { keyBar?.dispose(); keyBar = null; terminal.fit(); };
+  const unmountKeyBar = () => {
+    keyBar?.dispose(); keyBar = null;
+    mountEl.style.bottom = '0';
+    terminal.fit();
+  };
   const syncKeyBar = (mode: 'desktop' | 'mobile') => (mode === 'mobile' ? mountKeyBar() : unmountKeyBar());
   let offMode: (() => void) | null = null;
   if (ctx) { syncKeyBar(ctx.getMode()); offMode = ctx.onModeChange(syncKeyBar); }
@@ -91,6 +109,7 @@ export function createTerminalWindow(
     sftp = null;
     terminal.disconnect();
     terminal.dispose();
+    if (key) openTerminals.delete(key);
   });
 
   // 工具栏 SFTP 切换按钮（浮于窗口 body 右上角）
@@ -115,6 +134,14 @@ export function openTerminalFromWsUrl(
     notify('服务器返回了无效或不受信任的 WebSocket 地址。', { title: '无法建立连接', variant: 'danger' });
     return;
   }
+
+  // 同一服务器已有打开的终端窗口 → 置顶，不重复开
+  const key = hostKey(opts.hostInfo);
+  if (key) {
+    const existing = openTerminals.get(key);
+    if (existing) { existing.focus(); return; }
+  }
+
   const { terminal } = createTerminalWindow(wm, { name: opts.name, hostInfo: opts.hostInfo }, ctx);
   const ws = new WebSocket(opts.wsUrl);
   ws.binaryType = 'arraybuffer';
