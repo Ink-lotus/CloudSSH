@@ -139,6 +139,11 @@ export class WindowManager implements WindowActions {
     this.emitChange();
   }
 
+  /** 关闭全部窗口（逐个触发 onClose 清理），用于退出登录回到初始态 */
+  closeAll(): void {
+    Array.from(this.wins.keys()).forEach((id) => this.close(id));
+  }
+
   /** 移动返回键：询问该窗口注册的 onBack 处理器 */
   handleBack(id: string | null): boolean {
     if (!id) return false;
