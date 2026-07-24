@@ -1,6 +1,8 @@
 import { WindowManager, WindowHandle } from '../wm/window-manager';
 import { ServerList } from '../server-list';
-import { openTerminalFromWsUrl } from './terminal-app';
+import { openTerminalFromWsUrl, createTerminalWindow } from './terminal-app';
+import { QuickConnectForm } from './quick-connect';
+import { fetchAuthConfig } from '../turnstile';
 import type { ShellContext } from '../shell/types';
 
 type User = { id: number; github_id: number; username: string; avatar_url: string };
@@ -8,28 +10,23 @@ type User = { id: number; github_id: number; username: string; avatar_url: strin
 let serversWin: WindowHandle | null = null;
 let listInited = false;
 
-/**
- * 打开"服务器"窗口：把 index.html 中的 #server-space-host 迁入窗口 body，
- * 首次构造 ServerList（其 onConnect 转为开终端窗口）。
- * 复用现有 ServerList → "记住多台 VPS" 与增删改由其自身处理。
- */
-export function openServersWindow(wm: WindowManager, user: User, onLogout: () => void, ctx?: ShellContext): void {
-  // 已打开则聚焦，避免重复窗口
+/** 打开"服务器"窗口：登录用户→ServerList，匿名用户→QuickConnectForm */
+export function openServersWindow(wm: WindowManager, user: User | null, onLogout: () => void, ctx?: ShellContext): void {
   if (serversWin) { serversWin.focus(); return; }
+  if (user) openLoggedInServers(wm, user, onLogout, ctx);
+  else openAnonymousServers(wm, ctx);
+}
 
+/** 登录模式：迁入 #server-space-host，复用 ServerList（与原行为一致） */
+function openLoggedInServers(wm: WindowManager, user: User, onLogout: () => void, ctx?: ShellContext): void {
   const host = document.getElementById('server-space-host');
   if (!host) return;
 
-  const win = wm.openWindow({
-    title: '服务器', icon: 'dns',
-    width: 860, height: 580, minWidth: 460, minHeight: 340,
-  });
+  const win = wm.openWindow({ title: '服务器', icon: 'dns', width: 860, height: 580, minWidth: 460, minHeight: 340 });
   serversWin = win;
-
   win.bodyEl.appendChild(host);
   host.classList.remove('hidden');
 
-  // 上下文感知返回：服务器增改 modal 打开时→关闭它
   win.onBack(() => {
     const modal = document.getElementById('server-modal');
     if (modal && !modal.classList.contains('hidden')) {
@@ -40,13 +37,11 @@ export function openServersWindow(wm: WindowManager, user: User, onLogout: () =>
   });
 
   win.onClose(() => {
-    // 节点移回 #app 并隐藏，供下次复用（不销毁已绑定事件的 ServerList）
     host.classList.add('hidden');
     document.getElementById('app')?.appendChild(host);
     serversWin = null;
   });
 
-  // ServerList 只构造一次：其事件绑定在 #server-space-host / #server-modal 节点上
   if (!listInited) {
     listInited = true;
     // eslint-disable-next-line no-new
@@ -58,4 +53,24 @@ export function openServersWindow(wm: WindowManager, user: User, onLogout: () =>
       },
     );
   }
+}
+
+/** 匿名模式：窗口内挂载精简快速连接表单 */
+function openAnonymousServers(wm: WindowManager, ctx?: ShellContext): void {
+  const win = wm.openWindow({ title: '服务器', icon: 'dns', width: 560, height: 620, minWidth: 380, minHeight: 400 });
+  serversWin = win;
+
+  const container = document.createElement('div');
+  container.style.cssText = 'position:absolute;inset:0;overflow-y:auto;';
+  win.bodyEl.appendChild(container);
+
+  let form: QuickConnectForm | null = null;
+  fetchAuthConfig().then((authConfig) => {
+    form = new QuickConnectForm(container, {
+      authConfig,
+      createTerminalWindow: (opts) => createTerminalWindow(wm, opts, ctx),
+    });
+  });
+
+  win.onClose(() => { form?.dispose(); serversWin = null; });
 }
