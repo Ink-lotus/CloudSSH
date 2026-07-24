@@ -35,7 +35,7 @@ export class MobileShell implements Shell {
 
     const chrome = document.createElement('div');
     chrome.id = 'mobile-chrome';
-    chrome.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
+    chrome.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:9000;';
     chrome.innerHTML = `
       <div id="m-topbar" style="position:absolute;top:0;left:0;right:0;height:${TOP_H}px;display:flex;align-items:center;justify-content:center;font-size:12px;opacity:.6;z-index:50;pointer-events:none;"></div>
       <div id="m-home" style="position:absolute;top:${TOP_H}px;left:0;right:0;bottom:${BAR_H}px;z-index:10;display:grid;grid-template-columns:repeat(4,1fr);gap:22px 4px;align-content:start;padding:20px 14px;overflow-y:auto;pointer-events:auto;"></div>
