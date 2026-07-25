@@ -14,6 +14,7 @@ import {
   SSH_FXP_REALPATH,
   SSH_FXP_STAT,
   SSH_FXP_RENAME,
+  SSH_FXP_SETSTAT,
   SSH_FXP_STATUS,
   SSH_FXP_HANDLE,
   SSH_FXP_DATA,
@@ -371,6 +372,20 @@ export class SFTPClient {
     payload.set(oldBytes);
     payload.set(newBytes, oldBytes.length);
     return this.sendRequest(reqId, SSH_FXP_RENAME, payload);
+  }
+
+  // SSH_FXP_SETSTAT —— 仅设置 permissions（chmod）
+  async setStat(path: string, permissions: number): Promise<Uint8Array> {
+    const reqId = this.nextRequestId();
+    const pathBytes = encodeString(path);
+    const payload = new Uint8Array(pathBytes.length + 4 + 4);
+    let offset = 0;
+    payload.set(pathBytes, offset);
+    offset += pathBytes.length;
+    writeUint32(payload, offset, SSH_FILEXFER_ATTR_PERMISSIONS);
+    offset += 4;
+    writeUint32(payload, offset, permissions >>> 0);
+    return this.sendRequest(reqId, SSH_FXP_SETSTAT, payload);
   }
 
   // SSH_FXP_REALPATH
