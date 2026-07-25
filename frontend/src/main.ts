@@ -4,6 +4,7 @@ import { initI18n, onLocaleChange, t } from './i18n';
 import { ShellController } from './shell/shell-controller';
 import { openServersWindow } from './apps/servers-app';
 import { openSettingsWindow } from './apps/settings-app';
+import { openExplorerWindow } from './apps/explorer-app';
 
 type User = { id: number; github_id: number; username: string; avatar_url: string };
 
@@ -28,6 +29,7 @@ function showDesktop(user: User | null): void {
   d.show();
   d.registerApps([
     { id: 'servers', title: t('server.list'), icon: 'dns', open: () => openServersWindow(d.wm, user, onLogout, d) },
+    { id: 'explorer', title: t('explorer.title'), icon: 'folder', open: () => openExplorerWindow(d.wm, d) },
     { id: 'settings', title: '设置', icon: 'settings', open: () => openSettingsWindow(d.wm, d, user, onLogout) },
   ]);
 }
