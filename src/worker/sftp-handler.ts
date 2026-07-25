@@ -29,7 +29,7 @@ type SendEncryptedFn = (payload: Uint8Array) => Promise<void>;
 type SendJSONFn = (msg: any) => void;
 type SendBinaryFn = (data: Uint8Array) => void;
 type SendDebugFn = (message: string) => void;
-type SFTPOperation = 'init' | 'list' | 'stat' | 'download' | 'upload' | 'delete' | 'rename' | 'mkdir' | 'rmdir';
+type SFTPOperation = 'init' | 'list' | 'stat' | 'download' | 'upload' | 'delete' | 'rename' | 'mkdir' | 'rmdir' | 'chmod' | 'readText' | 'exec';
 
 export class SFTPHandler {
   private channelID: number;
@@ -781,6 +781,85 @@ export class SFTPHandler {
       this.sendJSON({ type: 'sftp_rmdir_result', path, success: true });
     } catch (e) {
       this.sendError('rmdir', '删除目录失败: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  async chmod(path: string, mode: number): Promise<void> {
+    if (!this.ready) {
+      this.sendError('chmod', 'SFTP 未就绪');
+      return;
+    }
+
+    try {
+      const resp = await this.sftp.setStat(path, mode);
+      if (resp[0] === SSH_FXP_STATUS) {
+        const status = this.sftp.parseStatusResponse(resp);
+        if (status.code !== SSH_FX_OK) {
+          this.sendError('chmod', status.message);
+          return;
+        }
+      }
+      this.sendJSON({ type: 'sftp_chmod_result', path, mode, success: true });
+    } catch (e) {
+      this.sendError('chmod', '权限修改失败: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  async readTextFile(path: string): Promise<void> {
+    if (!this.ready) {
+      this.sendError('readText', 'SFTP 未就绪');
+      return;
+    }
+
+    const MAX_TEXT_SIZE = 1 * 1024 * 1024; // 1MB
+    try {
+      const statResp = await this.sftp.stat(path);
+      if (statResp[0] === SSH_FXP_STATUS) {
+        const status = this.sftp.parseStatusResponse(statResp);
+        this.sendError('readText', status.message);
+        return;
+      }
+      const { attrs } = this.sftp.parseAttributes(statResp, 1);
+      const size = attrs.size || 0;
+      if (size > MAX_TEXT_SIZE) {
+        this.sendError('readText', `文件过大（${formatFileSize(size)}），请用编辑器打开`);
+        return;
+      }
+
+      const openResp = await this.sftp.openFile(path, SSH_FXF_READ);
+      if (openResp[0] === SSH_FXP_STATUS) {
+        const status = this.sftp.parseStatusResponse(openResp);
+        this.sendError('readText', status.message);
+        return;
+      }
+      const handle = this.sftp.parseHandleResponse(openResp);
+
+      const chunks: Uint8Array[] = [];
+      let offset = 0;
+      while (true) {
+        const dataResp = await this.sftp.readFile(handle, offset, DOWNLOAD_CHUNK_SIZE);
+        if (dataResp[0] === SSH_FXP_STATUS) {
+          const status = this.sftp.parseStatusResponse(dataResp);
+          if (status.code === SSH_FX_EOF) break;
+          await this.sftp.closeHandle(handle);
+          this.sendError('readText', status.message);
+          return;
+        }
+        const dataLen = ((dataResp[5] << 24) | (dataResp[6] << 16) | (dataResp[7] << 8) | dataResp[8]) >>> 0;
+        chunks.push(dataResp.subarray(9, 9 + dataLen));
+        offset += dataLen;
+        if (dataLen < DOWNLOAD_CHUNK_SIZE) break;
+      }
+      await this.sftp.closeHandle(handle);
+
+      const total = chunks.reduce((s, c) => s + c.length, 0);
+      const merged = new Uint8Array(total);
+      let p = 0;
+      for (const c of chunks) { merged.set(c, p); p += c.length; }
+      const content = new TextDecoder().decode(merged);
+      this.sendJSON({ type: 'sftp_read_text_result', path, content });
+    } catch (e) {
+      this.sendError('readText', '读取失败: ' + (e instanceof Error ? e.message : String(e)));
     }
   }
 
