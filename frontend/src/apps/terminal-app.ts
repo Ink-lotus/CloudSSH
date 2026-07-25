@@ -1,6 +1,5 @@
 import { WindowManager, WindowHandle } from '../wm/window-manager';
 import { SSHTerminal } from '../terminal';
-import { SFTPPanel } from '../sftp-panel';
 import { notify } from '../ui-feedback';
 import type { ShellContext } from '../shell/types';
 import { createSoftKeyBar } from '../mobile/soft-key-bar';
@@ -22,9 +21,10 @@ function validateWsUrl(wsUrl: string): boolean {
 export interface CreateTerminalWindowOptions {
   name: string;
   hostInfo?: { host: string; port: number };
+  initialCommand?: string;
 }
 
-/** 已打开的终端窗口（按 host:port 去重） */
+/** 已打开的终端窗口（按 host:port 去重；编辑窗口不参与去重） */
 const openTerminals = new Map<string, WindowHandle>();
 
 function hostKey(hostInfo?: { host: string; port: number }): string | null {
@@ -32,7 +32,7 @@ function hostKey(hostInfo?: { host: string; port: number }): string | null {
 }
 
 /**
- * 在桌面上打开一个终端窗口，装配 SSHTerminal 与 SFTPPanel，返回句柄。
+ * 在桌面上打开一个终端窗口，装配 SSHTerminal，返回句柄。
  * 不负责建立连接——由调用者决定 connect(config)（匿名）或 connectWithWebSocket(ws)（服务器列表）。
  */
 export function createTerminalWindow(
@@ -45,11 +45,10 @@ export function createTerminalWindow(
     width: 760, height: 480, minWidth: 360, minHeight: 220,
   });
 
-  // 注册到去重 Map
   const key = hostKey(opts.hostInfo);
-  if (key) openTerminals.set(key, win);
+  const dedup = key && !opts.initialCommand;
+  if (dedup) openTerminals.set(key!, win);
 
-  // SSHTerminal 需要一个带 id 的容器
   const containerId = `term-host-${++seq}`;
   const mountEl = document.createElement('div');
   mountEl.id = containerId;
@@ -57,31 +56,24 @@ export function createTerminalWindow(
   win.bodyEl.appendChild(mountEl);
 
   const terminal = new SSHTerminal(containerId);
-  let sftp: SFTPPanel | null = null;
 
   terminal.setSessionReadyHandler(() => {
     win.setDisconnected(false);
-    if (!sftp) {
-      sftp = new SFTPPanel(() => terminal.getSFTPWebSocketUrl());
-      sftp.bindEvents();
+    if (opts.initialCommand) {
+      setTimeout(() => terminal.sendWebSocketMessage(opts.initialCommand + '\n'), 300);
     }
-    sftp.handleSSHReady();
   });
   terminal.setSessionClosedHandler(() => {
     win.setDisconnected(true);
-    sftp?.hide();
   });
 
-  // 窗口缩放/最大化/还原 → 终端重排
   win.onResize(() => terminal.fit());
 
-  // 软键盘辅助条：仅移动模式挂载，随模式变化增删
   let keyBar: { el: HTMLElement; dispose: () => void } | null = null;
   const mountKeyBar = () => {
     if (keyBar) return;
     keyBar = createSoftKeyBar(terminal);
     win.bodyEl.appendChild(keyBar.el);
-    // 给终端区域底部留出辅助条高度，避免内容被遮挡
     const barH = keyBar.el.offsetHeight || 38;
     mountEl.style.bottom = `${barH}px`;
     terminal.fit();
@@ -95,30 +87,13 @@ export function createTerminalWindow(
   let offMode: (() => void) | null = null;
   if (ctx) { syncKeyBar(ctx.getMode()); offMode = ctx.onModeChange(syncKeyBar); }
 
-  // 上下文感知返回：SFTP 面板开→关面板回终端
-  win.onBack(() => {
-    if (sftp?.isVisible()) { sftp.hide(); return true; }
-    return false;
-  });
-
-  // 关窗清理
   win.onClose(() => {
     offMode?.();
     keyBar?.dispose();
-    sftp?.dispose();
-    sftp = null;
     terminal.disconnect();
     terminal.dispose();
-    if (key) openTerminals.delete(key);
+    if (dedup) openTerminals.delete(key!);
   });
-
-  // 工具栏 SFTP 切换按钮（浮于窗口 body 右上角）
-  const sftpBtn = document.createElement('button');
-  sftpBtn.title = 'SFTP 文件传输';
-  sftpBtn.className = 'absolute top-1 right-1 z-10 p-1';
-  sftpBtn.innerHTML = '<span class="material-symbols-outlined" style="font-size:18px;">folder_open</span>';
-  sftpBtn.addEventListener('click', () => sftp?.toggle());
-  win.bodyEl.appendChild(sftpBtn);
 
   terminal.mount();
   return { terminal, win };
@@ -127,7 +102,7 @@ export function createTerminalWindow(
 /** 服务器列表路径：用后端返回的 wsUrl（含 one-time-token）开终端窗口并连接 */
 export function openTerminalFromWsUrl(
   wm: WindowManager,
-  opts: { wsUrl: string; name: string; hostInfo?: { host: string; port: number } },
+  opts: { wsUrl: string; name: string; hostInfo?: { host: string; port: number }; initialCommand?: string },
   ctx?: ShellContext,
 ): void {
   if (!validateWsUrl(opts.wsUrl)) {
@@ -135,14 +110,15 @@ export function openTerminalFromWsUrl(
     return;
   }
 
-  // 同一服务器已有打开的终端窗口 → 置顶，不重复开
   const key = hostKey(opts.hostInfo);
-  if (key) {
+  if (key && !opts.initialCommand) {
     const existing = openTerminals.get(key);
     if (existing) { existing.focus(); return; }
   }
 
-  const { terminal } = createTerminalWindow(wm, { name: opts.name, hostInfo: opts.hostInfo }, ctx);
+  const { terminal } = createTerminalWindow(
+    wm, { name: opts.name, hostInfo: opts.hostInfo, initialCommand: opts.initialCommand }, ctx,
+  );
   const ws = new WebSocket(opts.wsUrl);
   ws.binaryType = 'arraybuffer';
   terminal.connectWithWebSocket(ws, opts.hostInfo);
