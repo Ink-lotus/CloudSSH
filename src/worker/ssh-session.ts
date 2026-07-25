@@ -1512,6 +1512,33 @@ export class SSHSession {
       case 'sftp_rmdir':
         await this.sftpHandler.removeDirectory(msg.path);
         break;
+      case 'sftp_chmod':
+        await this.sftpHandler.chmod(msg.path, msg.mode);
+        break;
+      case 'sftp_read_text':
+        await this.sftpHandler.readTextFile(msg.path);
+        break;
+      case 'sftp_exec': {
+        try {
+          const result = await this.executeAgentCommand(msg.command, msg.timeout || 30000);
+          this.sendSFTPJSON({
+            type: 'sftp_exec_result',
+            id: msg.id,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            exitCode: result.exitCode,
+          });
+        } catch (e) {
+          this.sendSFTPJSON({
+            type: 'sftp_exec_result',
+            id: msg.id,
+            stdout: '',
+            stderr: e instanceof Error ? e.message : String(e),
+            exitCode: -1,
+          });
+        }
+        break;
+      }
       case 'sftp_close':
         this.closeSFTPChannel();
         break;
@@ -1596,6 +1623,12 @@ export class SSHSession {
         return 'mkdir';
       case 'sftp_rmdir':
         return 'rmdir';
+      case 'sftp_chmod':
+        return 'chmod';
+      case 'sftp_read_text':
+        return 'readText';
+      case 'sftp_exec':
+        return 'exec';
       default:
         return 'protocol';
     }
