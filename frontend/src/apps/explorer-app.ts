@@ -7,6 +7,7 @@ import { completeDetachedTab, TabManager } from '../explorer/tab-manager';
 import { DesktopExplorer, type ExplorerUICtx } from '../explorer/desktop-explorer';
 import { MobileExplorer, type MobileUICtx } from '../explorer/mobile-explorer';
 import { renderServerPicker } from '../explorer/server-picker';
+import { PickerLifecycle } from '../explorer/picker-lifecycle';
 import type { ActionsContext } from '../explorer/explorer-actions';
 import { openExplorerTerminalWindow } from './terminal-app';
 import { notify } from '../ui-feedback';
@@ -64,7 +65,7 @@ export function openExplorerWindow(
 
   let desktop: DesktopExplorer | null = null;
   let mobile: MobileExplorer | null = null;
-  let disposePicker: (() => void) | null = null;
+  const pickerLifecycle = new PickerLifecycle();
   let resolveReady!: () => void;
   let rejectReady!: (error: unknown) => void;
   let readySettled = false;
@@ -90,9 +91,9 @@ export function openExplorerWindow(
 
   const showPicker = (): void => {
     if (abortController.signal.aborted) return;
-    disposePicker?.();
     const layer = document.createElement('div');
     layer.style.cssText = 'position:absolute;inset:0;z-index:20;background:var(--surface,#0d0d0d);overflow:auto;';
+    pickerLifecycle.activate(layer);
     uiHost.appendChild(layer);
     void renderServerPicker({
       container: layer,
@@ -105,18 +106,18 @@ export function openExplorerWindow(
       onPickSaved: async (request) => {
         try {
           await connectAndTab(request);
-          disposePicker?.(); disposePicker = null; layer.remove();
+          pickerLifecycle.dismiss(layer);
         } catch { /* 保留选择器以便重试 */ }
       },
       onSubmitDirect: async (request) => {
         await connectAndTab(request);
-        disposePicker?.(); disposePicker = null; layer.remove();
+        pickerLifecycle.dismiss(layer);
       },
       onLogin: options.onLogin,
       onError: (m) => notify(m, { variant: 'danger' }),
     }).then((dispose) => {
-      if (abortController.signal.aborted || !layer.isConnected) dispose();
-      else disposePicker = dispose;
+      if (abortController.signal.aborted) dispose();
+      else pickerLifecycle.attach(layer, dispose);
     });
   };
 
@@ -173,7 +174,7 @@ export function openExplorerWindow(
     }
     abortController.abort();
     offMode?.();
-    disposePicker?.();
+    pickerLifecycle.dispose();
     desktop?.dispose(); mobile?.dispose();
     tabs.dispose();
     pool.disposeAll();

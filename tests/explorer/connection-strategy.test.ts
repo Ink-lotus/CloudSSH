@@ -144,6 +144,24 @@ describe('connectExplorerSSH', () => {
 
     await expect(pending).rejects.toThrow('EXPLORER_CONNECT_ABORTED');
   });
+
+  it('stops immediately when aborted while a direct connection dependency is pending', async () => {
+    const request = requestFromDirectConfig({
+      host: 'ssh.example.com', port: 22, username: 'alice', password: 'secret',
+    }, 'abort-pending-dependency');
+    const terminal = new FakeTerminal();
+    const controller = new AbortController();
+    const pending = connectExplorerSSH(request, terminal, dependencies({
+      loadKnownFingerprint: () => new Promise<string | null>(() => {}),
+    }), controller.signal);
+
+    controller.abort();
+
+    await expect(Promise.race([
+      pending,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('ABORT_NOT_IMMEDIATE')), 50)),
+    ])).rejects.toThrow('EXPLORER_CONNECT_ABORTED');
+  });
 });
 
 describe('waitForSFTPAttachUrl', () => {
@@ -243,9 +261,12 @@ function poolHarness(): PoolHarness {
       createHiddenHost: () => host,
       createMount: (_host, id) => { mount.id = id; return mount; },
       createTerminal: () => terminal,
-      connectSSH: () => new Promise<void>((resolve, reject) => {
+      connectSSH: (_request, _terminal, signal) => new Promise<void>((resolve, reject) => {
         resolveSSH = resolve;
         rejectSSH = reject;
+        const onAbort = () => reject(new Error('EXPLORER_CONNECT_ABORTED'));
+        if (signal?.aborted) onAbort();
+        else signal?.addEventListener('abort', onAbort, { once: true });
       }),
       waitForAttachUrl: async () => 'wss://example.test/sftp',
       createSFTPConnection: () => sftp,
@@ -346,4 +367,34 @@ describe('ConnectionPool cleanup', () => {
     expect(harness.sftpDisposals).toBe(1);
     expect(harness.hostRemoved).toBe(1);
   });
+
+  it('cancels and cleans an in-flight direct connection when all connections are disposed', async () => {
+    const harness = poolHarness();
+    const pool = new ConnectionPool(harness.deps);
+    const request = requestFromDirectConfig({
+      host: 'ssh.example.com', port: 22, username: 'alice', password: 'secret-password',
+    }, 'pending-dispose');
+    const pending = pool.connect(request);
+
+    pool.disposeAll();
+
+    await expect(pending).rejects.toThrow('EXPLORER_CONNECT_ABORTED');
+    expect(harness.terminalDisconnects).toBe(1);
+    expect(harness.terminalDisposals).toBe(1);
+    expect(harness.mountRemoved).toBe(1);
+    expect(harness.hostRemoved).toBe(1);
+  });
+
+  it('rejects new connections after the pool is disposed', async () => {
+    const harness = poolHarness();
+    const pool = new ConnectionPool(harness.deps);
+    const request = requestFromDirectConfig({
+      host: 'ssh.example.com', port: 22, username: 'alice', password: 'secret-password',
+    }, 'after-dispose');
+
+    pool.disposeAll();
+
+    await expect(pool.connect(request)).rejects.toThrow('CONNECTION_POOL_DISPOSED');
+  });
+
 });

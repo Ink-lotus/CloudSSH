@@ -49,9 +49,10 @@ export async function connectExplorerSSH(
     signal?.addEventListener('abort', onAbort, { once: true });
   });
 
-  try {
+  const startConnection = async (): Promise<void> => {
     if (request.connect.source === 'saved') {
       const wsUrl = await deps.connectServerWs(request.connect.serverId);
+      if (signal?.aborted) throw new Error('EXPLORER_CONNECT_ABORTED');
       const ws = deps.createWebSocket(wsUrl);
       ws.binaryType = 'arraybuffer';
       terminal.connectWithWebSocket(ws, {
@@ -61,18 +62,21 @@ export async function connectExplorerSSH(
     } else {
       const config = request.connect.config;
       const knownFingerprint = await deps.loadKnownFingerprint(config.host, config.port);
+      if (signal?.aborted) throw new Error('EXPLORER_CONNECT_ABORTED');
       const expectedFingerprint = knownFingerprint || config.expectedFingerprint;
       await terminal.connect({
         ...config,
         ...(expectedFingerprint ? { expectedFingerprint } : {}),
       });
     }
+  };
+
+  try {
+    await Promise.all([startConnection(), ready]);
   } catch (error) {
     abandonReady();
     throw error;
   }
-
-  await ready;
 }
 
 export interface SFTPAttachWaitOptions {
@@ -190,20 +194,32 @@ export class ConnectionPool {
   private changeCbs = new Set<() => void>();
   private hiddenHost: HTMLElement;
   private connecting = new Map<ExplorerConnectionKey, Promise<SFTPConnection>>();
+  private connectingControllers = new Map<ExplorerConnectionKey, AbortController>();
   private mountSeq = 0;
+  private disposed = false;
 
   constructor(private deps: ConnectionPoolDependencies = defaultPoolDependencies) {
     this.hiddenHost = deps.createHiddenHost();
   }
 
   connect(request: ExplorerConnectionRequest, signal?: AbortSignal): Promise<SFTPConnection> {
+    if (this.disposed) return Promise.reject(new Error('CONNECTION_POOL_DISPOSED'));
     const key = request.target.key;
     const existing = this.pool.get(key);
     if (existing) return Promise.resolve(existing.connection);
     const inflight = this.connecting.get(key);
     if (inflight) return inflight;
 
-    const p = this.doConnect(request, signal).finally(() => this.connecting.delete(key));
+    const controller = new AbortController();
+    const onAbort = (): void => controller.abort();
+    if (signal?.aborted) controller.abort();
+    else signal?.addEventListener('abort', onAbort, { once: true });
+    this.connectingControllers.set(key, controller);
+    const p = this.doConnect(request, controller.signal).finally(() => {
+      signal?.removeEventListener('abort', onAbort);
+      this.connecting.delete(key);
+      this.connectingControllers.delete(key);
+    });
     this.connecting.set(key, p);
     return p;
   }
@@ -228,12 +244,21 @@ export class ConnectionPool {
 
       connection = this.deps.createSFTPConnection(() => attachUrl);
       await new Promise<void>((resolve, reject) => {
+        const cleanup = (): void => signal?.removeEventListener('abort', onAbort);
+        const onAbort = (): void => { cleanup(); reject(new Error('SFTP_ATTACH_ABORTED')); };
+        if (signal?.aborted) {
+          onAbort();
+          return;
+        }
+        signal?.addEventListener('abort', onAbort, { once: true });
         connection!.connect({
-          onReady: () => resolve(),
-          onError: (error) => reject(new Error(error)),
+          onReady: () => { cleanup(); resolve(); },
+          onError: (error) => { cleanup(); reject(new Error(error)); },
           onDisconnect: () => this.notify(),
         });
       });
+
+      if (signal?.aborted) throw new Error('SFTP_ATTACH_ABORTED');
 
       this.pool.set(target.key, {
         request,
@@ -281,6 +306,10 @@ export class ConnectionPool {
   }
 
   disposeAll(): void {
+    this.disposed = true;
+    this.connectingControllers.forEach((controller) => controller.abort());
+    this.connectingControllers.clear();
+    this.connecting.clear();
     [...this.pool.keys()].forEach((key) => this.disconnect(key));
     this.hiddenHost.remove();
     this.changeCbs.clear();
