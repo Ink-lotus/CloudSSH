@@ -3,17 +3,16 @@
 import type { TabManager } from './tab-manager';
 import { tabTitle } from './tab-manager';
 import type { ConnectionPool } from './connection-pool';
-import type { SavedServer } from '../shared/server-data';
-import { requestFromSavedServer, type ExplorerConnectionKey } from './connection-target';
+import type { ExplorerConnectionKey, ExplorerTarget } from './connection-target';
 import type { SFTPFileEntry } from './sftp-connection';
 import { showContextMenu, closeContextMenu, type MenuItem } from './context-menu';
 import { t } from '../i18n';
 import { requestText, confirmAction } from '../ui-feedback';
 
 export interface ExplorerUICtx {
-  allServers: () => SavedServer[];
+  allTargets: () => ExplorerTarget[];
   onNewTab: () => void;
-  onConnectServer: (server: SavedServer) => void;
+  onConnectTarget: (target: ExplorerTarget) => void;
   onDetachTab: (tabId: string) => void;
   onDisconnectServer: (connectionKey: ExplorerConnectionKey) => void;
 }
@@ -167,8 +166,8 @@ export class DesktopExplorer {
     const tree = this.root.querySelector('#ex-tree') as HTMLElement;
     if (!tree) return;
     const active = this.tabs.getActiveTab();
-    tree.innerHTML = this.ui.allServers().map((s) => {
-      const key = requestFromSavedServer(s).target.key;
+    tree.innerHTML = this.ui.allTargets().map((target) => {
+      const key = target.key;
       const connected = this.pool.isConnected(key);
       const dot = connected ? '<span class="w-1.5 h-1.5 rounded-full bg-primary-container"></span>' : '<span class="w-1.5 h-1.5 rounded-full border border-outline-variant"></span>';
       const expanded = connected && this.treeExpanded.has(key);
@@ -176,7 +175,7 @@ export class DesktopExplorer {
       return `<div>
         <div class="ex-srv flex items-center gap-1 px-1 py-0.5 rounded cursor-pointer hover:bg-surface-variant" data-key="${escapeHtml(key)}">
           ${connected ? `<span class="ex-srv-toggle material-symbols-outlined" style="font-size:14px;" data-key="${escapeHtml(key)}">${expanded ? 'expand_more' : 'chevron_right'}</span>` : '<span style="width:14px;"></span>'}
-          ${dot}<span class="truncate flex-1">${escapeHtml(s.name)}</span>
+          ${dot}<span class="truncate flex-1">${escapeHtml(target.name)}</span>
         </div>
         <div class="ml-3">${childrenHtml}</div>
       </div>`;
@@ -185,8 +184,8 @@ export class DesktopExplorer {
     tree.querySelectorAll('.ex-srv').forEach((el) => el.addEventListener('click', async (e) => {
       if ((e.target as HTMLElement).classList.contains('ex-srv-toggle')) return;
       const key = (el as HTMLElement).dataset.key as ExplorerConnectionKey;
-      const server = this.ui.allServers().find((s) => requestFromSavedServer(s).target.key === key)!;
-      if (!this.pool.isConnected(key)) { this.ui.onConnectServer(server); return; }
+      const target = this.ui.allTargets().find((item) => item.key === key);
+      if (target) this.ui.onConnectTarget(target);
     }));
     tree.querySelectorAll('.ex-srv-toggle').forEach((el) => el.addEventListener('click', async (e) => {
       e.stopPropagation();

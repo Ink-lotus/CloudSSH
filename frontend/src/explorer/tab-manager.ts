@@ -37,8 +37,10 @@ export class TabManager {
 
   constructor(private pool: ConnectionPool, private ctx: ActionsContext) {}
 
-  async createTab(request: ExplorerConnectionRequest): Promise<Tab> {
-    await this.pool.connect(request);
+  async createTab(request: ExplorerConnectionRequest, signal?: AbortSignal): Promise<Tab> {
+    if (signal?.aborted) throw new Error('EXPLORER_CONNECT_ABORTED');
+    await this.pool.connect(request, signal);
+    if (signal?.aborted) throw new Error('EXPLORER_CONNECT_ABORTED');
     this.pool.acquire(request.target.key);
     const id = `tab-${++this.seq}`;
     const state = new ExplorerState(id, request.target.key);

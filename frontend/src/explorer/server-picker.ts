@@ -75,6 +75,7 @@ export interface ServerPickerOptions {
   connectedKeys: Set<ExplorerConnectionKey>;
   onPickSaved: (request: ExplorerConnectionRequest) => void;
   onSubmitDirect: (request: ExplorerConnectionRequest) => void;
+  onSavedServersLoaded?: (requests: ExplorerConnectionRequest[]) => void;
   onLogin?: () => void;
   onError?: (message: string) => void;
 }
@@ -95,6 +96,9 @@ export async function renderServerPicker(opts: ServerPickerOptions): Promise<() 
   }
 
   const state = connectionPickerState(opts.authenticated, load);
+  if (load.status === 'loaded') {
+    opts.onSavedServersLoaded?.(load.servers.map(requestFromSavedServer));
+  }
   let activeSource = state.activeSource;
   let directForm: SSHConnectionForm | null = null;
 

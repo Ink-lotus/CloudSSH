@@ -50,4 +50,30 @@ describe('TabManager connection key lifecycle', () => {
     tabs.closeTab(tab.id);
     expect(released).toBe('saved:7');
   });
+
+  it('does not create or acquire a tab after the connection is aborted', async () => {
+    let finishConnect!: () => void;
+    let acquired = false;
+    const pool = {
+      connect: () => new Promise<void>((resolve) => { finishConnect = resolve; }),
+      acquire: () => { acquired = true; },
+      release: () => 0,
+    } as unknown as ConnectionPool;
+    const tabs = new TabManager(pool, {
+      openInTerminal: () => undefined,
+      notify: () => undefined,
+    });
+    const request = requestFromSavedServer({
+      id: 7, name: '开发机', host: '10.0.0.2', port: 22, username: 'root',
+    });
+    const controller = new AbortController();
+
+    const pending = tabs.createTab(request, controller.signal);
+    controller.abort();
+    finishConnect();
+
+    await expect(pending).rejects.toThrow('EXPLORER_CONNECT_ABORTED');
+    expect(acquired).toBe(false);
+    expect(tabs.count()).toBe(0);
+  });
 });

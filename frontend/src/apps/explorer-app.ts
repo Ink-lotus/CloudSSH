@@ -8,19 +8,31 @@ import { DesktopExplorer, type ExplorerUICtx } from '../explorer/desktop-explore
 import { MobileExplorer, type MobileUICtx } from '../explorer/mobile-explorer';
 import { renderServerPicker } from '../explorer/server-picker';
 import type { ActionsContext } from '../explorer/explorer-actions';
-import { fetchSavedServers, connectServerWs, type SavedServer } from '../shared/server-data';
+import { connectServerWs } from '../shared/server-data';
 import { openTerminalFromWsUrl } from './terminal-app';
 import { notify } from '../ui-feedback';
 import { t } from '../i18n';
 import {
-  requestFromSavedServer,
+  type ExplorerConnectionKey,
   type ExplorerConnectionRequest,
+  type ExplorerTarget,
 } from '../explorer/connection-target';
+import type { AuthConfig } from '../turnstile';
+
+export interface OpenExplorerOptions {
+  authenticated: boolean;
+  authConfig: AuthConfig;
+  initialRequest?: ExplorerConnectionRequest;
+  onLogin?: () => void;
+}
 
 export function openExplorerWindow(
   wm: WindowManager,
   ctx?: ShellContext,
-  initialRequest?: ExplorerConnectionRequest,
+  options: OpenExplorerOptions = {
+    authenticated: false,
+    authConfig: { turnstileEnabled: false, sitekey: '', githubAuthEnabled: false },
+  },
 ): void {
   const win = wm.openWindow({
     title: t('explorer.title'), icon: 'folder',
@@ -28,7 +40,8 @@ export function openExplorerWindow(
   });
 
   const pool = new ConnectionPool();
-  let allServers: SavedServer[] = [];
+  const abortController = new AbortController();
+  const requests = new Map<ExplorerConnectionKey, ExplorerConnectionRequest>();
 
   const actionsCtx: ActionsContext = {
     openInTerminal: (request, command) => {
@@ -58,47 +71,77 @@ export function openExplorerWindow(
 
   let desktop: DesktopExplorer | null = null;
   let mobile: MobileExplorer | null = null;
+  let disposePicker: (() => void) | null = null;
 
   const connectAndTab = async (request: ExplorerConnectionRequest): Promise<void> => {
     try {
-      await tabs.createTab(request);
+      await tabs.createTab(request, abortController.signal);
+      if (abortController.signal.aborted) return;
+      requests.set(request.target.key, request);
       mountUI();
     } catch (e) {
+      if (abortController.signal.aborted) return;
       notify(e instanceof Error ? e.message : String(e), { title: t('explorer.connectFailed'), variant: 'danger' });
       showPicker();
     }
   };
 
   const showPicker = (): void => {
+    if (abortController.signal.aborted) return;
+    disposePicker?.();
     const layer = document.createElement('div');
     layer.style.cssText = 'position:absolute;inset:0;z-index:20;background:var(--surface,#0d0d0d);overflow:auto;';
     uiHost.appendChild(layer);
     void renderServerPicker({
       container: layer,
+      authenticated: options.authenticated,
+      authConfig: options.authConfig,
       connectedKeys: new Set(pool.getAll().map((p) => p.target.key)),
-      onPick: async (server) => { layer.remove(); await connectAndTab(requestFromSavedServer(server)); },
+      onSavedServersLoaded: (savedRequests) => {
+        savedRequests.forEach((request) => requests.set(request.target.key, request));
+      },
+      onPickSaved: async (request) => {
+        disposePicker?.(); disposePicker = null; layer.remove(); await connectAndTab(request);
+      },
+      onSubmitDirect: async (request) => {
+        disposePicker?.(); disposePicker = null; layer.remove(); await connectAndTab(request);
+      },
+      onLogin: options.onLogin,
       onError: (m) => notify(m, { variant: 'danger' }),
+    }).then((dispose) => {
+      if (abortController.signal.aborted || !layer.isConnected) dispose();
+      else disposePicker = dispose;
     });
   };
 
   const uiCtx: ExplorerUICtx = {
-    allServers: () => allServers,
+    allTargets: () => {
+      const targets = new Map<ExplorerConnectionKey, ExplorerTarget>();
+      requests.forEach((request) => targets.set(request.target.key, request.target));
+      pool.getAll().forEach((pooled) => targets.set(pooled.target.key, pooled.target));
+      return [...targets.values()];
+    },
     onNewTab: () => showPicker(),
-    onConnectServer: (server) => void connectAndTab(requestFromSavedServer(server)),
+    onConnectTarget: (target) => {
+      const request = pool.getRequest(target.key) ?? requests.get(target.key);
+      if (request) void connectAndTab(request);
+    },
     onDetachTab: (tabId) => {
       const tab = tabs.getAllTabs().find((tt) => tt.id === tabId);
       if (!tab) return;
       const request = pool.getRequest(tab.connectionKey);
       if (!request) return;
       tabs.closeTab(tabId);
-      openExplorerWindow(wm, ctx, request);
+      openExplorerWindow(wm, ctx, { ...options, initialRequest: request });
     },
     onDisconnectServer: (connectionKey) => pool.disconnect(connectionKey),
   };
 
   const mobileCtx: MobileUICtx = {
     onSwitchServer: () => showPicker(),
-    onNewWindow: () => openExplorerWindow(wm, ctx),
+    allTargets: () => uiCtx.allTargets(),
+    onConnectTarget: (target) => uiCtx.onConnectTarget(target),
+    onNewWindow: () => openExplorerWindow(wm, ctx, options),
     onDisconnect: () => { const a = tabs.getActiveTab(); if (a) pool.disconnect(a.connectionKey); },
   };
 
@@ -113,15 +156,16 @@ export function openExplorerWindow(
   const offMode = ctx?.onModeChange(() => { if (tabs.count() > 0) mountUI(); });
   win.onBack(() => (mobile ? mobile.onBack() : false));
   win.onClose(() => {
+    abortController.abort();
     offMode?.();
+    disposePicker?.();
     desktop?.dispose(); mobile?.dispose();
     tabs.dispose();
     pool.disposeAll();
   });
 
   void (async () => {
-    try { allServers = await fetchSavedServers(); } catch { /* 忽略，选择页会再拉一次 */ }
-    if (initialRequest) await connectAndTab(initialRequest);
+    if (options.initialRequest) await connectAndTab(options.initialRequest);
     else showPicker();
   })();
 }

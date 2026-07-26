@@ -5,6 +5,7 @@ import { ShellController } from './shell/shell-controller';
 import { openServersWindow } from './apps/servers-app';
 import { openSettingsWindow } from './apps/settings-app';
 import { openExplorerWindow } from './apps/explorer-app';
+import { fetchAuthConfig, type AuthConfig } from './turnstile';
 
 type User = { id: number; github_id: number; username: string; avatar_url: string };
 
@@ -24,12 +25,21 @@ function onLogout(): void {
 }
 
 /** 进入桌面：匿名与登录用户都注册”服务器”和”设置”App（user 可为 null） */
-function showDesktop(user: User | null): void {
+function showDesktop(user: User | null, authConfig: AuthConfig): void {
   const d = getShell();
   d.show();
   d.registerApps([
     { id: 'servers', title: t('server.list'), icon: 'dns', open: () => openServersWindow(d.wm, user, onLogout, d) },
-    { id: 'explorer', title: t('explorer.title'), icon: 'folder', open: () => openExplorerWindow(d.wm, d) },
+    {
+      id: 'explorer',
+      title: t('explorer.title'),
+      icon: 'folder',
+      open: () => openExplorerWindow(d.wm, d, {
+        authenticated: user !== null,
+        authConfig,
+        onLogin: () => { location.href = '/api/auth/github'; },
+      }),
+    },
     { id: 'settings', title: '设置', icon: 'settings', open: () => openSettingsWindow(d.wm, d, user, onLogout) },
   ]);
 }
@@ -152,7 +162,8 @@ async function init(): Promise<void> {
   } catch {
     // 未登录，user 保持 null
   }
-  showDesktop(user);
+  const authConfig = await fetchAuthConfig();
+  showDesktop(user, authConfig);
 }
 
 init();

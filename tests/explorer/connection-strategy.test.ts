@@ -118,6 +118,25 @@ describe('connectExplorerSSH', () => {
     expect((error as Error).message).toBe('authentication failed');
     expect((error as Error).message).not.toContain('SECRET-PRIVATE-KEY');
   });
+
+  it('stops waiting for session ready when aborted', async () => {
+    const request = requestFromSavedServer({
+      id: 7, name: '开发机', host: '10.0.0.2', port: 22, username: 'root',
+    });
+    const terminal = new FakeTerminal();
+    terminal.connectWithWebSocket = (ws, hostInfo) => {
+      terminal.connectedSocket = ws;
+      terminal.hostInfo = hostInfo;
+    };
+    const controller = new AbortController();
+    const pending = connectExplorerSSH(
+      request, terminal, dependencies(), controller.signal,
+    );
+
+    controller.abort();
+
+    await expect(pending).rejects.toThrow('EXPLORER_CONNECT_ABORTED');
+  });
 });
 
 describe('waitForSFTPAttachUrl', () => {

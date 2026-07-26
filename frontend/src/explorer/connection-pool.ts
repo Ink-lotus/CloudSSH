@@ -36,10 +36,15 @@ export async function connectExplorerSSH(
   request: ExplorerConnectionRequest,
   terminal: ExplorerTerminal,
   deps: ExplorerSSHDependencies = defaultSSHDependencies,
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (signal?.aborted) throw new Error('EXPLORER_CONNECT_ABORTED');
   const ready = new Promise<void>((resolve, reject) => {
-    terminal.setSessionReadyHandler(resolve);
-    terminal.setSessionClosedHandler(() => reject(new Error('SSH_SESSION_CLOSED')));
+    const cleanup = (): void => signal?.removeEventListener('abort', onAbort);
+    const onAbort = (): void => { cleanup(); reject(new Error('EXPLORER_CONNECT_ABORTED')); };
+    terminal.setSessionReadyHandler(() => { cleanup(); resolve(); });
+    terminal.setSessionClosedHandler(() => { cleanup(); reject(new Error('SSH_SESSION_CLOSED')); });
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 
   if (request.connect.source === 'saved') {
@@ -175,7 +180,7 @@ export class ConnectionPool {
 
     try {
       if (signal?.aborted) throw new Error('SFTP_ATTACH_ABORTED');
-      await connectExplorerSSH(request, terminal);
+      await connectExplorerSSH(request, terminal, defaultSSHDependencies, signal);
       const attachUrl = await waitForSFTPAttachUrl(
         () => terminal.getSFTPWebSocketUrl(),
         { signal },

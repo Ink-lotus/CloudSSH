@@ -7,9 +7,12 @@ import { showContextMenu, type MenuItem } from './context-menu';
 import { showChmodDialog } from './desktop-explorer';
 import { t } from '../i18n';
 import { requestText, confirmAction } from '../ui-feedback';
+import type { ExplorerTarget } from './connection-target';
 
 export interface MobileUICtx {
   onSwitchServer: () => void;
+  allTargets: () => ExplorerTarget[];
+  onConnectTarget: (target: ExplorerTarget) => void;
   onNewWindow: () => void;
   onDisconnect: () => void;
 }
@@ -130,6 +133,14 @@ export class MobileExplorer {
   }
 
   private globalMenu(e: MouseEvent, active: NonNullable<ReturnType<TabManager['getActiveTab']>>): void {
+    const targetItems: MenuItem[] = this.ui.allTargets().map((target) => ({
+      label: target.name,
+      icon: target.source === 'saved' ? 'dns' : 'terminal',
+      onClick: () => this.ui.onConnectTarget(target),
+    }));
+    targetItems.push({
+      label: t('explorer.connect'), icon: 'add', onClick: () => this.ui.onSwitchServer(),
+    });
     const items: MenuItem[] = [
       { label: t('explorer.upload'), icon: 'upload_file', onClick: () => this.pickAndUpload(active) },
       { label: t('explorer.newFolder'), icon: 'create_new_folder', onClick: async () => {
@@ -143,7 +154,7 @@ export class MobileExplorer {
       { label: t('explorer.paste'), icon: 'content_paste', disabled: !active.state.clipboard, onClick: () => void active.actions.paste() },
       { label: t('explorer.refresh'), icon: 'refresh', onClick: () => void active.actions.refresh() },
       { label: t('explorer.newWindow'), icon: 'open_in_new', onClick: () => this.ui.onNewWindow() },
-      { label: t('explorer.switchServer'), icon: 'dns', onClick: () => this.ui.onSwitchServer() },
+      { label: t('explorer.switchServer'), icon: 'dns', submenu: targetItems },
       { label: t('explorer.disconnect'), icon: 'link_off', danger: true, onClick: () => this.ui.onDisconnect() },
     ];
     showContextMenu(e.clientX, e.clientY, items);
