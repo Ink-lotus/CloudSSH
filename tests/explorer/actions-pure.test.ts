@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { joinPath, buildOpenCommand, parseFindOutput } from '../../frontend/src/explorer/explorer-actions';
+import { joinPath, buildOpenCommand, parseFindOutput, ExplorerActions } from '../../frontend/src/explorer/explorer-actions';
+import { ExplorerState } from '../../frontend/src/explorer/explorer-state';
+import type { ConnectionPool } from '../../frontend/src/explorer/connection-pool';
 
 describe('joinPath', () => {
   it('根目录拼接不产生双斜杠', () => {
@@ -29,5 +31,27 @@ describe('parseFindOutput', () => {
   });
   it('忽略空行', () => {
     expect(parseFindOutput('\n\n')).toEqual([]);
+  });
+});
+
+describe('ExplorerActions clipboard identity', () => {
+  it('records the source connection key', () => {
+    const state = new ExplorerState('t1', 'direct:abc');
+    state.setFiles([{
+      name: 'notes.txt', type: 'file', size: 1, sizeFormatted: '1 B',
+      permissions: '-rw-r--r--', permissionsRaw: 0o644, modifiedTime: 0,
+      isDir: false, isLink: false,
+    }]);
+    state.select('notes.txt', 'single');
+    const actions = new ExplorerActions(
+      state,
+      {} as ConnectionPool,
+      { openInTerminal: () => undefined, notify: () => undefined },
+    );
+
+    actions.copy();
+
+    expect(state.clipboard?.sourceConnectionKey).toBe('direct:abc');
+    expect(state.clipboard).not.toHaveProperty('sourceServerId');
   });
 });

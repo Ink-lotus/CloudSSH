@@ -3,11 +3,11 @@
 import { ExplorerState } from './explorer-state';
 import { ExplorerActions, type ActionsContext } from './explorer-actions';
 import type { ConnectionPool } from './connection-pool';
-import type { SavedServer } from '../shared/server-data';
+import type { ExplorerConnectionKey, ExplorerConnectionRequest } from './connection-target';
 
 export interface Tab {
   id: string;
-  serverId: number;
+  connectionKey: ExplorerConnectionKey;
   state: ExplorerState;
   actions: ExplorerActions;
 }
@@ -37,13 +37,13 @@ export class TabManager {
 
   constructor(private pool: ConnectionPool, private ctx: ActionsContext) {}
 
-  async createTab(server: SavedServer): Promise<Tab> {
-    await this.pool.connect(server);
-    this.pool.acquire(server.id);
+  async createTab(request: ExplorerConnectionRequest): Promise<Tab> {
+    await this.pool.connect(request);
+    this.pool.acquire(request.target.key);
     const id = `tab-${++this.seq}`;
-    const state = new ExplorerState(id, server.id);
+    const state = new ExplorerState(id, request.target.key);
     const actions = new ExplorerActions(state, this.pool, this.ctx);
-    const tab: Tab = { id, serverId: server.id, state, actions };
+    const tab: Tab = { id, connectionKey: request.target.key, state, actions };
     this.tabs.push(tab);
     this.activeId = id;
     this.notify();
@@ -57,7 +57,7 @@ export class TabManager {
     const ids = this.tabs.map((t) => t.id);
     this.activeId = nextActiveAfterClose(ids, tabId, this.activeId ?? '');
     this.tabs = this.tabs.filter((t) => t.id !== tabId);
-    this.pool.release(tab.serverId);
+    this.pool.release(tab.connectionKey);
     this.notify();
   }
 
@@ -75,7 +75,7 @@ export class TabManager {
   private notify(): void { this.changeCbs.forEach((cb) => cb()); }
 
   dispose(): void {
-    this.tabs.forEach((t) => this.pool.release(t.serverId));
+    this.tabs.forEach((t) => this.pool.release(t.connectionKey));
     this.tabs = [];
     this.activeId = null;
     this.changeCbs.clear();

@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { tabTitle, nextActiveAfterClose } from '../../frontend/src/explorer/tab-manager';
+import { tabTitle, nextActiveAfterClose, TabManager } from '../../frontend/src/explorer/tab-manager';
+import type { ConnectionPool } from '../../frontend/src/explorer/connection-pool';
+import { requestFromSavedServer } from '../../frontend/src/explorer/connection-target';
 
 describe('tabTitle', () => {
   it('根目录显示 服务器名:/', () => {
@@ -22,5 +24,30 @@ describe('nextActiveAfterClose', () => {
   });
   it('关闭唯一标签，返回 null', () => {
     expect(nextActiveAfterClose(['a'], 'a', 'a')).toBeNull();
+  });
+});
+
+describe('TabManager connection key lifecycle', () => {
+  it('closes a tab by releasing its connection key', async () => {
+    let released: unknown;
+    const pool = {
+      connect: async () => undefined,
+      acquire: () => undefined,
+      release: (key: unknown) => { released = key; return 0; },
+      get: () => ({ listDirectory: async () => [] }),
+    } as unknown as ConnectionPool;
+    const tabs = new TabManager(pool, {
+      openInTerminal: () => undefined,
+      notify: () => undefined,
+    });
+    const request = requestFromSavedServer({
+      id: 7, name: '开发机', host: '10.0.0.2', port: 22, username: 'root',
+    });
+
+    const tab = await tabs.createTab(request);
+    expect(tab.connectionKey).toBe('saved:7');
+
+    tabs.closeTab(tab.id);
+    expect(released).toBe('saved:7');
   });
 });

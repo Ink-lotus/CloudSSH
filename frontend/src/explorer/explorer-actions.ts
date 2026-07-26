@@ -2,11 +2,11 @@
 
 import type { ExplorerState, SortKey } from './explorer-state';
 import type { ConnectionPool } from './connection-pool';
-import type { SavedServer } from '../shared/server-data';
 import type { SFTPConnection } from './sftp-connection';
+import type { ExplorerConnectionRequest } from './connection-target';
 
 export interface ActionsContext {
-  openInTerminal: (server: SavedServer, initialCommand: string) => void;
+  openInTerminal: (request: ExplorerConnectionRequest, initialCommand: string) => void;
   notify: (message: string, variant?: 'info' | 'danger') => void;
 }
 
@@ -55,7 +55,7 @@ export class ExplorerActions {
   ) {}
 
   private conn(): SFTPConnection {
-    const c = this.pool.get(this.state.serverId);
+    const c = this.pool.get(this.state.connectionKey);
     if (!c) throw new Error('连接不可用');
     return c;
   }
@@ -88,14 +88,14 @@ export class ExplorerActions {
     if (!files.length) return;
     this.state.clipboard = {
       files, sourcePath: this.state.currentPath,
-      sourceServerId: this.state.serverId, mode,
+      sourceConnectionKey: this.state.connectionKey, mode,
     };
     this.ctx.notify(`已${mode === 'copy' ? '复制' : '剪切'} ${files.length} 项`);
   }
   async paste(): Promise<void> {
     const cb = this.state.clipboard;
     if (!cb) return;
-    if (cb.sourceServerId !== this.state.serverId) {
+    if (cb.sourceConnectionKey !== this.state.connectionKey) {
       this.ctx.notify('跨服务器传输将在后续版本支持', 'danger');
       return;
     }
@@ -204,8 +204,8 @@ export class ExplorerActions {
       }
       return;
     }
-    const server = this.pool.getServer(this.state.serverId);
-    if (server) this.ctx.openInTerminal(server, buildOpenCommand(method, path));
+    const request = this.pool.getRequest(this.state.connectionKey);
+    if (request) this.ctx.openInTerminal(request, buildOpenCommand(method, path));
   }
 
   // ---- 排序 ----

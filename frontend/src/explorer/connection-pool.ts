@@ -2,36 +2,42 @@
 
 import { SSHTerminal } from '../terminal';
 import { SFTPConnection } from './sftp-connection';
-import { connectServerWs, type SavedServer } from '../shared/server-data';
+import { connectServerWs } from '../shared/server-data';
+import type {
+  ExplorerConnectionKey,
+  ExplorerConnectionRequest,
+  ExplorerTarget,
+} from './connection-target';
 
 /** 引用计数纯逻辑（可单测） */
 export class ConnectionRefCounter {
-  private counts = new Map<number, number>();
-  acquire(id: number): number {
-    const n = (this.counts.get(id) || 0) + 1;
-    this.counts.set(id, n);
+  private counts = new Map<ExplorerConnectionKey, number>();
+  acquire(key: ExplorerConnectionKey): number {
+    const n = (this.counts.get(key) || 0) + 1;
+    this.counts.set(key, n);
     return n;
   }
-  release(id: number): number {
-    const n = Math.max(0, (this.counts.get(id) || 0) - 1);
-    this.counts.set(id, n);
+  release(key: ExplorerConnectionKey): number {
+    const n = Math.max(0, (this.counts.get(key) || 0) - 1);
+    this.counts.set(key, n);
     return n;
   }
-  count(id: number): number { return this.counts.get(id) || 0; }
+  count(key: ExplorerConnectionKey): number { return this.counts.get(key) || 0; }
 }
 
 export interface PooledConnection {
-  server: SavedServer;
+  request: ExplorerConnectionRequest;
+  target: ExplorerTarget;
   terminal: SSHTerminal;
   connection: SFTPConnection;
 }
 
 export class ConnectionPool {
-  private pool = new Map<number, PooledConnection>();
+  private pool = new Map<ExplorerConnectionKey, PooledConnection>();
   private refs = new ConnectionRefCounter();
   private changeCbs = new Set<() => void>();
   private hiddenHost: HTMLElement;
-  private connecting = new Map<number, Promise<SFTPConnection>>();
+  private connecting = new Map<ExplorerConnectionKey, Promise<SFTPConnection>>();
 
   constructor() {
     this.hiddenHost = document.createElement('div');
@@ -39,32 +45,37 @@ export class ConnectionPool {
     document.body.appendChild(this.hiddenHost);
   }
 
-  connect(server: SavedServer): Promise<SFTPConnection> {
-    const existing = this.pool.get(server.id);
+  connect(request: ExplorerConnectionRequest): Promise<SFTPConnection> {
+    const key = request.target.key;
+    const existing = this.pool.get(key);
     if (existing) return Promise.resolve(existing.connection);
-    const inflight = this.connecting.get(server.id);
+    const inflight = this.connecting.get(key);
     if (inflight) return inflight;
 
-    const p = this.doConnect(server).finally(() => this.connecting.delete(server.id));
-    this.connecting.set(server.id, p);
+    const p = this.doConnect(request).finally(() => this.connecting.delete(key));
+    this.connecting.set(key, p);
     return p;
   }
 
-  private async doConnect(server: SavedServer): Promise<SFTPConnection> {
+  private async doConnect(request: ExplorerConnectionRequest): Promise<SFTPConnection> {
+    if (request.connect.source !== 'saved') {
+      throw new Error('Direct connections are not supported yet');
+    }
+    const { target } = request;
     const mountEl = document.createElement('div');
-    mountEl.id = `explorer-conn-${server.id}`;
+    mountEl.id = `explorer-conn-${request.connect.serverId}`;
     mountEl.style.cssText = 'width:400px;height:300px;';
     this.hiddenHost.appendChild(mountEl);
     const terminal = new SSHTerminal(mountEl.id);
     terminal.mount();
 
-    const wsUrl = await connectServerWs(server.id);
+    const wsUrl = await connectServerWs(request.connect.serverId);
     const ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';
     await new Promise<void>((resolve, reject) => {
       terminal.setSessionReadyHandler(() => resolve());
       terminal.setSessionClosedHandler(() => reject(new Error('主连接已关闭')));
-      terminal.connectWithWebSocket(ws, { host: server.host, port: server.port });
+      terminal.connectWithWebSocket(ws, { host: target.host, port: target.port });
     });
 
     const connection = new SFTPConnection(() => terminal.getSFTPWebSocketUrl());
@@ -76,38 +87,42 @@ export class ConnectionPool {
       });
     });
 
-    this.pool.set(server.id, { server, terminal, connection });
+    this.pool.set(target.key, { request, target, terminal, connection });
     this.notify();
     return connection;
   }
 
-  acquire(serverId: number): void { this.refs.acquire(serverId); }
-  release(serverId: number): number { return this.refs.release(serverId); }
-  refCount(serverId: number): number { return this.refs.count(serverId); }
+  acquire(connectionKey: ExplorerConnectionKey): void { this.refs.acquire(connectionKey); }
+  release(connectionKey: ExplorerConnectionKey): number { return this.refs.release(connectionKey); }
+  refCount(connectionKey: ExplorerConnectionKey): number { return this.refs.count(connectionKey); }
 
-  get(serverId: number): SFTPConnection | null {
-    return this.pool.get(serverId)?.connection ?? null;
+  get(connectionKey: ExplorerConnectionKey): SFTPConnection | null {
+    return this.pool.get(connectionKey)?.connection ?? null;
   }
-  getServer(serverId: number): SavedServer | null {
-    return this.pool.get(serverId)?.server ?? null;
+  getRequest(connectionKey: ExplorerConnectionKey): ExplorerConnectionRequest | null {
+    return this.pool.get(connectionKey)?.request ?? null;
+  }
+  getTarget(connectionKey: ExplorerConnectionKey): ExplorerTarget | null {
+    return this.pool.get(connectionKey)?.target ?? null;
   }
   getAll(): PooledConnection[] { return [...this.pool.values()]; }
-  isConnected(serverId: number): boolean { return this.pool.has(serverId); }
+  isConnected(connectionKey: ExplorerConnectionKey): boolean { return this.pool.has(connectionKey); }
 
-  disconnect(serverId: number): void {
-    const p = this.pool.get(serverId);
+  disconnect(connectionKey: ExplorerConnectionKey): void {
+    const p = this.pool.get(connectionKey);
     if (!p) return;
     p.connection.dispose();
     p.terminal.disconnect();
     p.terminal.dispose();
-    const el = document.getElementById(`explorer-conn-${serverId}`);
+    const serverId = p.request.connect.source === 'saved' ? p.request.connect.serverId : null;
+    const el = serverId === null ? null : document.getElementById(`explorer-conn-${serverId}`);
     el?.remove();
-    this.pool.delete(serverId);
+    this.pool.delete(connectionKey);
     this.notify();
   }
 
   disposeAll(): void {
-    [...this.pool.keys()].forEach((id) => this.disconnect(id));
+    [...this.pool.keys()].forEach((key) => this.disconnect(key));
     this.hiddenHost.remove();
     this.changeCbs.clear();
   }

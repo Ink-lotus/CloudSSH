@@ -4,6 +4,7 @@ import type { TabManager } from './tab-manager';
 import { tabTitle } from './tab-manager';
 import type { ConnectionPool } from './connection-pool';
 import type { SavedServer } from '../shared/server-data';
+import { requestFromSavedServer, type ExplorerConnectionKey } from './connection-target';
 import type { SFTPFileEntry } from './sftp-connection';
 import { showContextMenu, closeContextMenu, type MenuItem } from './context-menu';
 import { t } from '../i18n';
@@ -14,7 +15,7 @@ export interface ExplorerUICtx {
   onNewTab: () => void;
   onConnectServer: (server: SavedServer) => void;
   onDetachTab: (tabId: string) => void;
-  onDisconnectServer: (serverId: number) => void;
+  onDisconnectServer: (connectionKey: ExplorerConnectionKey) => void;
 }
 
 function escapeHtml(s: string): string {
@@ -30,7 +31,7 @@ function formatTime(sec: number): string {
 export class DesktopExplorer {
   private offCbs: (() => void)[] = [];
   private activeStateOff: (() => void) | null = null;
-  private treeExpanded = new Map<number, Set<string>>();
+  private treeExpanded = new Map<ExplorerConnectionKey, Set<string>>();
   private treeChildren = new Map<string, SFTPFileEntry[]>();
 
   constructor(
@@ -83,8 +84,8 @@ export class DesktopExplorer {
     if (!bar) return;
     const active = this.tabs.getActiveTab();
     bar.innerHTML = this.tabs.getAllTabs().map((tab) => {
-      const server = this.pool.getServer(tab.serverId);
-      const title = tabTitle(server?.name ?? '?', tab.state.currentPath);
+      const target = this.pool.getTarget(tab.connectionKey);
+      const title = tabTitle(target?.name ?? '?', tab.state.currentPath);
       const on = tab.id === active?.id;
       return `<div class="ex-tab flex items-center gap-1 px-2 py-1 rounded cursor-pointer ${on ? 'bg-surface-variant text-on-surface' : 'text-on-surface-variant hover:bg-surface-variant'}" draggable="true" data-id="${tab.id}">
         <span class="truncate max-w-[140px]">${escapeHtml(title)}</span>
@@ -167,13 +168,14 @@ export class DesktopExplorer {
     if (!tree) return;
     const active = this.tabs.getActiveTab();
     tree.innerHTML = this.ui.allServers().map((s) => {
-      const connected = this.pool.isConnected(s.id);
+      const key = requestFromSavedServer(s).target.key;
+      const connected = this.pool.isConnected(key);
       const dot = connected ? '<span class="w-1.5 h-1.5 rounded-full bg-primary-container"></span>' : '<span class="w-1.5 h-1.5 rounded-full border border-outline-variant"></span>';
-      const expanded = connected && this.treeExpanded.has(s.id);
-      const childrenHtml = expanded ? this.renderTreeChildren(s.id, active?.state.currentPath ?? '/') : '';
+      const expanded = connected && this.treeExpanded.has(key);
+      const childrenHtml = expanded ? this.renderTreeChildren(key, active?.state.currentPath ?? '/') : '';
       return `<div>
-        <div class="ex-srv flex items-center gap-1 px-1 py-0.5 rounded cursor-pointer hover:bg-surface-variant" data-sid="${s.id}">
-          ${connected ? `<span class="ex-srv-toggle material-symbols-outlined" style="font-size:14px;" data-sid="${s.id}">${expanded ? 'expand_more' : 'chevron_right'}</span>` : '<span style="width:14px;"></span>'}
+        <div class="ex-srv flex items-center gap-1 px-1 py-0.5 rounded cursor-pointer hover:bg-surface-variant" data-key="${escapeHtml(key)}">
+          ${connected ? `<span class="ex-srv-toggle material-symbols-outlined" style="font-size:14px;" data-key="${escapeHtml(key)}">${expanded ? 'expand_more' : 'chevron_right'}</span>` : '<span style="width:14px;"></span>'}
           ${dot}<span class="truncate flex-1">${escapeHtml(s.name)}</span>
         </div>
         <div class="ml-3">${childrenHtml}</div>
@@ -182,71 +184,71 @@ export class DesktopExplorer {
 
     tree.querySelectorAll('.ex-srv').forEach((el) => el.addEventListener('click', async (e) => {
       if ((e.target as HTMLElement).classList.contains('ex-srv-toggle')) return;
-      const sid = Number((el as HTMLElement).dataset.sid);
-      const server = this.ui.allServers().find((s) => s.id === sid)!;
-      if (!this.pool.isConnected(sid)) { this.ui.onConnectServer(server); return; }
+      const key = (el as HTMLElement).dataset.key as ExplorerConnectionKey;
+      const server = this.ui.allServers().find((s) => requestFromSavedServer(s).target.key === key)!;
+      if (!this.pool.isConnected(key)) { this.ui.onConnectServer(server); return; }
     }));
     tree.querySelectorAll('.ex-srv-toggle').forEach((el) => el.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const sid = Number((el as HTMLElement).dataset.sid);
-      await this.toggleServerTree(sid);
+      const key = (el as HTMLElement).dataset.key as ExplorerConnectionKey;
+      await this.toggleServerTree(key);
     }));
     tree.querySelectorAll('.ex-tnode').forEach((el) => {
-      const sid = Number((el as HTMLElement).dataset.sid);
+      const key = (el as HTMLElement).dataset.key as ExplorerConnectionKey;
       const path = (el as HTMLElement).dataset.path!;
       el.addEventListener('click', (e) => {
         if ((e.target as HTMLElement).classList.contains('ex-tnode-toggle')) return;
-        if (active && active.serverId === sid) void active.actions.navigate(path);
+        if (active && active.connectionKey === key) void active.actions.navigate(path);
       });
     });
     tree.querySelectorAll('.ex-tnode-toggle').forEach((el) => el.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const sid = Number((el as HTMLElement).dataset.sid);
-      await this.toggleTreeDir(sid, (el as HTMLElement).dataset.path!);
+      const key = (el as HTMLElement).dataset.key as ExplorerConnectionKey;
+      await this.toggleTreeDir(key, (el as HTMLElement).dataset.path!);
     }));
   }
 
-  private renderTreeChildren(sid: number, _cur: string): string {
-    const set = this.treeExpanded.get(sid);
+  private renderTreeChildren(key: ExplorerConnectionKey, _cur: string): string {
+    const set = this.treeExpanded.get(key);
     if (!set) return '';
-    return this.renderTreeLevel(sid, '.', 0);
+    return this.renderTreeLevel(key, '.', 0);
   }
-  private renderTreeLevel(sid: number, path: string, depth: number): string {
+  private renderTreeLevel(key: ExplorerConnectionKey, path: string, depth: number): string {
     if (depth > 8) return '';
-    const dirs = this.treeChildren.get(`${sid}:${path}`) || [];
+    const dirs = this.treeChildren.get(`${key}:${path}`) || [];
     return dirs.map((d) => {
       const childPath = path === '.' ? d.name : `${path}/${d.name}`;
-      const isExp = this.treeExpanded.get(sid)?.has(childPath);
+      const isExp = this.treeExpanded.get(key)?.has(childPath);
       return `<div>
-        <div class="ex-tnode flex items-center gap-1 px-1 py-0.5 rounded cursor-pointer hover:bg-surface-variant" data-sid="${sid}" data-path="${escapeHtml(childPath)}">
-          <span class="ex-tnode-toggle material-symbols-outlined" style="font-size:13px;" data-sid="${sid}" data-path="${escapeHtml(childPath)}">${isExp ? 'expand_more' : 'chevron_right'}</span>
+        <div class="ex-tnode flex items-center gap-1 px-1 py-0.5 rounded cursor-pointer hover:bg-surface-variant" data-key="${escapeHtml(key)}" data-path="${escapeHtml(childPath)}">
+          <span class="ex-tnode-toggle material-symbols-outlined" style="font-size:13px;" data-key="${escapeHtml(key)}" data-path="${escapeHtml(childPath)}">${isExp ? 'expand_more' : 'chevron_right'}</span>
           <span class="material-symbols-outlined" style="font-size:13px;">folder</span>
           <span class="truncate">${escapeHtml(d.name)}</span>
         </div>
-        ${isExp ? `<div class="ml-3">${this.renderTreeLevel(sid, childPath, depth + 1)}</div>` : ''}
+        ${isExp ? `<div class="ml-3">${this.renderTreeLevel(key, childPath, depth + 1)}</div>` : ''}
       </div>`;
     }).join('');
   }
 
-  private async toggleServerTree(sid: number): Promise<void> {
-    if (this.treeExpanded.has(sid)) { this.treeExpanded.delete(sid); this.renderTree(); return; }
-    this.treeExpanded.set(sid, new Set(['.']));
-    await this.loadTreeDir(sid, '.');
+  private async toggleServerTree(key: ExplorerConnectionKey): Promise<void> {
+    if (this.treeExpanded.has(key)) { this.treeExpanded.delete(key); this.renderTree(); return; }
+    this.treeExpanded.set(key, new Set(['.']));
+    await this.loadTreeDir(key, '.');
     this.renderTree();
   }
-  private async toggleTreeDir(sid: number, path: string): Promise<void> {
-    const set = this.treeExpanded.get(sid) ?? new Set<string>();
-    if (set.has(path)) { set.delete(path); this.treeExpanded.set(sid, set); this.renderTree(); return; }
-    set.add(path); this.treeExpanded.set(sid, set);
-    await this.loadTreeDir(sid, path);
+  private async toggleTreeDir(key: ExplorerConnectionKey, path: string): Promise<void> {
+    const set = this.treeExpanded.get(key) ?? new Set<string>();
+    if (set.has(path)) { set.delete(path); this.treeExpanded.set(key, set); this.renderTree(); return; }
+    set.add(path); this.treeExpanded.set(key, set);
+    await this.loadTreeDir(key, path);
     this.renderTree();
   }
-  private async loadTreeDir(sid: number, path: string): Promise<void> {
-    const conn = this.pool.get(sid);
+  private async loadTreeDir(key: ExplorerConnectionKey, path: string): Promise<void> {
+    const conn = this.pool.get(key);
     if (!conn) return;
     try {
       const entries = await conn.listDirectory(path);
-      this.treeChildren.set(`${sid}:${path}`, entries.filter((e) => e.isDir && e.name !== '.' && e.name !== '..'));
+      this.treeChildren.set(`${key}:${path}`, entries.filter((e) => e.isDir && e.name !== '.' && e.name !== '..'));
     } catch { /* 忽略树加载失败 */ }
   }
 
@@ -402,7 +404,7 @@ export class DesktopExplorer {
     if (!active) { bar.innerHTML = ''; return; }
     const st = active.state;
     const sel = st.selected.size;
-    const conn = this.pool.get(active.serverId);
+    const conn = this.pool.get(active.connectionKey);
     const online = conn?.isReady() ?? false;
     bar.innerHTML = `<span>${st.visibleFiles().length} ${t('explorer.items')}${sel ? ` · ${t('explorer.selected')} ${sel}` : ''}</span><span>${st.loading ? t('explorer.loading') : (st.error ? `⚠ ${escapeHtml(st.error)}` : (online ? '● ' + t('explorer.connected') : '○ ' + t('explorer.offline')))}</span>`;
   }

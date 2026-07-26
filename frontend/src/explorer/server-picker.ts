@@ -2,10 +2,11 @@
 
 import { fetchSavedServers, type SavedServer } from '../shared/server-data';
 import { t } from '../i18n';
+import type { ExplorerConnectionKey } from './connection-target';
 
 export interface ServerPickerOptions {
   container: HTMLElement;
-  connectedIds: Set<number>;
+  connectedKeys: Set<ExplorerConnectionKey>;
   onPick: (server: SavedServer) => void;
   onError?: (message: string) => void;
 }
@@ -43,7 +44,7 @@ export async function renderServerPicker(opts: ServerPickerOptions): Promise<voi
       <div class="flex items-center gap-2 mb-1">
         <span class="material-symbols-outlined text-primary" style="font-size:18px;">dns</span>
         <span class="text-sm font-bold">${escapeHtml(s.name)}</span>
-        ${opts.connectedIds.has(s.id) ? '<span class="ml-auto w-2 h-2 rounded-full bg-primary-container"></span>' : ''}
+        ${opts.connectedKeys.has(`saved:${s.id}`) ? '<span class="ml-auto w-2 h-2 rounded-full bg-primary-container"></span>' : ''}
       </div>
       <div class="text-[11px] text-on-surface-variant">${escapeHtml(s.username)}@${escapeHtml(s.host)}:${s.port}</div>
     </button>

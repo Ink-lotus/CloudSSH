@@ -12,11 +12,15 @@ import { fetchSavedServers, connectServerWs, type SavedServer } from '../shared/
 import { openTerminalFromWsUrl } from './terminal-app';
 import { notify } from '../ui-feedback';
 import { t } from '../i18n';
+import {
+  requestFromSavedServer,
+  type ExplorerConnectionRequest,
+} from '../explorer/connection-target';
 
 export function openExplorerWindow(
   wm: WindowManager,
   ctx?: ShellContext,
-  initialServer?: SavedServer,
+  initialRequest?: ExplorerConnectionRequest,
 ): void {
   const win = wm.openWindow({
     title: t('explorer.title'), icon: 'folder',
@@ -27,13 +31,15 @@ export function openExplorerWindow(
   let allServers: SavedServer[] = [];
 
   const actionsCtx: ActionsContext = {
-    openInTerminal: (server, command) => {
+    openInTerminal: (request, command) => {
+      if (request.connect.source !== 'saved') return;
+      const serverId = request.connect.serverId;
       void (async () => {
         try {
-          const wsUrl = await connectServerWs(server.id);
+          const wsUrl = await connectServerWs(serverId);
           openTerminalFromWsUrl(
             wm,
-            { wsUrl, name: `${server.name}: ${command}`, hostInfo: { host: server.host, port: server.port }, initialCommand: command },
+            { wsUrl, name: `${request.target.name}: ${command}`, hostInfo: { host: request.target.host, port: request.target.port }, initialCommand: command },
             ctx,
           );
         } catch (e) {
@@ -53,9 +59,9 @@ export function openExplorerWindow(
   let desktop: DesktopExplorer | null = null;
   let mobile: MobileExplorer | null = null;
 
-  const connectAndTab = async (server: SavedServer): Promise<void> => {
+  const connectAndTab = async (request: ExplorerConnectionRequest): Promise<void> => {
     try {
-      await tabs.createTab(server);
+      await tabs.createTab(request);
       mountUI();
     } catch (e) {
       notify(e instanceof Error ? e.message : String(e), { title: t('explorer.connectFailed'), variant: 'danger' });
@@ -69,8 +75,8 @@ export function openExplorerWindow(
     uiHost.appendChild(layer);
     void renderServerPicker({
       container: layer,
-      connectedIds: new Set(pool.getAll().map((p) => p.server.id)),
-      onPick: async (server) => { layer.remove(); await connectAndTab(server); },
+      connectedKeys: new Set(pool.getAll().map((p) => p.target.key)),
+      onPick: async (server) => { layer.remove(); await connectAndTab(requestFromSavedServer(server)); },
       onError: (m) => notify(m, { variant: 'danger' }),
     });
   };
@@ -78,22 +84,22 @@ export function openExplorerWindow(
   const uiCtx: ExplorerUICtx = {
     allServers: () => allServers,
     onNewTab: () => showPicker(),
-    onConnectServer: (server) => void connectAndTab(server),
+    onConnectServer: (server) => void connectAndTab(requestFromSavedServer(server)),
     onDetachTab: (tabId) => {
       const tab = tabs.getAllTabs().find((tt) => tt.id === tabId);
       if (!tab) return;
-      const server = pool.getServer(tab.serverId);
-      if (!server) return;
+      const request = pool.getRequest(tab.connectionKey);
+      if (!request) return;
       tabs.closeTab(tabId);
-      openExplorerWindow(wm, ctx, server);
+      openExplorerWindow(wm, ctx, request);
     },
-    onDisconnectServer: (sid) => pool.disconnect(sid),
+    onDisconnectServer: (connectionKey) => pool.disconnect(connectionKey),
   };
 
   const mobileCtx: MobileUICtx = {
     onSwitchServer: () => showPicker(),
     onNewWindow: () => openExplorerWindow(wm, ctx),
-    onDisconnect: () => { const a = tabs.getActiveTab(); if (a) pool.disconnect(a.serverId); },
+    onDisconnect: () => { const a = tabs.getActiveTab(); if (a) pool.disconnect(a.connectionKey); },
   };
 
   function mountUI(): void {
@@ -115,7 +121,7 @@ export function openExplorerWindow(
 
   void (async () => {
     try { allServers = await fetchSavedServers(); } catch { /* 忽略，选择页会再拉一次 */ }
-    if (initialServer) await connectAndTab(initialServer);
+    if (initialRequest) await connectAndTab(initialRequest);
     else showPicker();
   })();
 }

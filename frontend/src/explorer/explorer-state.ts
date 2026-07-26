@@ -1,19 +1,20 @@
 // 单标签页状态 —— 选择/排序/历史/剪贴板纯逻辑 + onChange 通知
 
 import type { SFTPFileEntry } from './sftp-connection';
+import type { ExplorerConnectionKey } from './connection-target';
 
 export type SortKey = 'name' | 'size' | 'modified' | 'permissions';
 
 export interface Clipboard {
   files: SFTPFileEntry[];
   sourcePath: string;
-  sourceServerId: number;
+  sourceConnectionKey: ExplorerConnectionKey;
   mode: 'copy' | 'move';
 }
 
 export class ExplorerState {
   readonly tabId: string;
-  serverId: number;
+  connectionKey: ExplorerConnectionKey;
   currentPath = '/';
   files: SFTPFileEntry[] = [];
   history: string[] = [];
@@ -30,9 +31,9 @@ export class ExplorerState {
 
   private changeCbs = new Set<() => void>();
 
-  constructor(tabId: string, serverId: number) {
+  constructor(tabId: string, connectionKey: ExplorerConnectionKey) {
     this.tabId = tabId;
-    this.serverId = serverId;
+    this.connectionKey = connectionKey;
   }
 
   // ---- 选择 ----
