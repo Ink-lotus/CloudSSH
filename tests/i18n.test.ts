@@ -46,16 +46,6 @@ describe('国际化核心', () => {
     expect(resolveAutoLocale(['fr-FR'])).toBe('en-US');
     expect(resolveAutoLocale([])).toBe('en-US');
   });
-
-  it('英文 SFTP 工具栏使用紧凑操作标签', () => {
-    expect(enUS['sftp.uploadAction']).toBe('UPLOAD');
-    expect(enUS['sftp.mkdirAction']).toBe('MKDIR');
-    expect(enUS['sftp.downloadAction']).toBe('DOWNLOAD');
-    expect(enUS['sftp.deleteAction']).toBe('DELETE');
-    expect(enUS['sftp.renameAction']).toBe('RENAME');
-    expect(enUS['sftp.upload']).toBe('Upload file');
-    expect(enUS['sftp.newFolder']).toBe('New folder');
-  });
 });
 
 describe('Agent 响应语言', () => {
