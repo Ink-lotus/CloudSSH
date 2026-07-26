@@ -44,6 +44,7 @@ export const zhCN = {
   'auth.login': '使用 GitHub 登录',
   'auth.logout': '退出登录',
   'auth.validationHostUser': '请输入主机地址和用户名。',
+  'auth.validationPort': '端口必须是 1 到 65535 之间的整数。',
   'auth.validationPassword': '请输入密码。',
   'auth.validationPrivateKey': '请输入私钥。',
   'auth.readKeyFailed': '读取私钥文件失败。',
