@@ -25,7 +25,10 @@ export class ConnectionOverlay {
     head.style.cssText = 'font-weight:600;';
     this.headText = document.createElement('span');
     this.dots = document.createElement('span');
-    head.append(this.headText, this.dots);
+    this.dots.style.cssText = 'display:inline-block;width:1.5em;text-align:left;';
+    const spacer = document.createElement('span');
+    spacer.style.cssText = 'display:inline-block;width:1.5em;';
+    head.append(spacer, this.headText, this.dots);
     this.log = document.createElement('div');
     this.log.style.cssText = 'opacity:.75;font-size:12px;max-width:90%;';
     this.root.append(head, this.log);
