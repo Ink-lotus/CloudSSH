@@ -210,7 +210,6 @@ export const zhCN = {
   'explorer.tree': '目录树',
   'explorer.connected': '已连接',
   'explorer.offline': '已断开',
-  'explorer.loginRequired': '需要登录 GitHub 才能使用资源管理器。',
   'agent.title': 'AI Agent 助手',
   'agent.settings': 'AI Agent 设置',
   'agent.close': '关闭 Agent 面板',

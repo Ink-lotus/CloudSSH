@@ -28,14 +28,9 @@ export function toSavedServer(c: ServerConfig): SavedServer {
   return { id: c.id, name: c.name, host: c.host, port: c.port, username: c.username };
 }
 
-export class AuthRequiredError extends Error {
-  constructor() { super('Authentication required'); this.name = 'AuthRequiredError'; }
-}
-
 /** 拉取已保存服务器列表 */
 export async function fetchSavedServers(): Promise<SavedServer[]> {
   const res = await fetch('/api/servers');
-  if (res.status === 401) throw new AuthRequiredError();
   if (!res.ok) throw new Error('Failed to fetch servers');
   const list = (await res.json()) as ServerConfig[];
   return list.map(toSavedServer);
