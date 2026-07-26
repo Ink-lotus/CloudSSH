@@ -84,7 +84,7 @@ export function openExplorerWindow(
       if (abortController.signal.aborted) return;
       if (options.initialRequest && !readySettled) rejectReady(e);
       notify(e instanceof Error ? e.message : String(e), { title: t('explorer.connectFailed'), variant: 'danger' });
-      showPicker();
+      throw e;
     }
   };
 
@@ -103,10 +103,14 @@ export function openExplorerWindow(
         savedRequests.forEach((request) => requests.set(request.target.key, request));
       },
       onPickSaved: async (request) => {
-        disposePicker?.(); disposePicker = null; layer.remove(); await connectAndTab(request);
+        try {
+          await connectAndTab(request);
+          disposePicker?.(); disposePicker = null; layer.remove();
+        } catch { /* 保留选择器以便重试 */ }
       },
       onSubmitDirect: async (request) => {
-        disposePicker?.(); disposePicker = null; layer.remove(); await connectAndTab(request);
+        await connectAndTab(request);
+        disposePicker?.(); disposePicker = null; layer.remove();
       },
       onLogin: options.onLogin,
       onError: (m) => notify(m, { variant: 'danger' }),
@@ -126,7 +130,7 @@ export function openExplorerWindow(
     onNewTab: () => showPicker(),
     onConnectTarget: (target) => {
       const request = pool.getRequest(target.key) ?? requests.get(target.key);
-      if (request) void connectAndTab(request);
+      if (request) void connectAndTab(request).catch(() => showPicker());
     },
     onDetachTab: (tabId) => {
       const tab = tabs.getAllTabs().find((tt) => tt.id === tabId);
@@ -176,7 +180,9 @@ export function openExplorerWindow(
   });
 
   void (async () => {
-    if (options.initialRequest) await connectAndTab(options.initialRequest);
+    if (options.initialRequest) {
+      try { await connectAndTab(options.initialRequest); } catch { /* ready 已携带失败 */ }
+    }
     else { showPicker(); resolveReady(); }
   })();
 

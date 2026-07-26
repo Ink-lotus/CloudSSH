@@ -12,7 +12,9 @@ import {
 } from '../credential-store';
 import { TurnstileController, type AuthConfig } from '../turnstile';
 import {
+  connectionDraftAfterFailure,
   parseConnectionDraft,
+  type ConnectionDraft,
   type ConnectionValidationError,
 } from '../shared/connection-input';
 
@@ -27,6 +29,7 @@ export interface SSHConnectionFormOptions {
     config: SSHConnectionConfig,
     meta: SSHConnectionSubmitMeta,
   ) => void | Promise<void>;
+  onSubmitError?: (error: unknown) => void;
 }
 
 /** 可复用 SSH 连接表单：负责输入、校验、Turnstile 与本地最近连接。 */
@@ -234,7 +237,7 @@ export class SSHConnectionForm {
   }
 
   private async handleConnect(): Promise<void> {
-    const result = parseConnectionDraft({
+    const draft: ConnectionDraft = {
       host: (this.q('#qc-host') as HTMLInputElement).value,
       port: (this.q('#qc-port') as HTMLInputElement).value,
       username: (this.q('#qc-username') as HTMLInputElement).value,
@@ -242,7 +245,8 @@ export class SSHConnectionForm {
       privateKey: (this.q('#qc-private-key') as HTMLTextAreaElement).value,
       authMethod: this.authMode === 'key' ? 'publickey' : 'password',
       locationHint: (this.q('#qc-region') as HTMLSelectElement).value,
-    });
+    };
+    const result = parseConnectionDraft(draft);
 
     if (!result.ok) {
       const feedback = this.validationMessage(result.error);
@@ -284,9 +288,20 @@ export class SSHConnectionForm {
     });
     this.renderRecentConnections();
 
-    await this.options.onSubmit(config, {
-      name: `${config.username}@${config.host}`,
-      remember,
-    });
+    try {
+      await this.options.onSubmit(config, {
+        name: `${config.username}@${config.host}`,
+        remember,
+      });
+    } catch (error) {
+      const next = connectionDraftAfterFailure(draft, remember);
+      (this.q('#qc-password') as HTMLInputElement).value = next.password;
+      (this.q('#qc-private-key') as HTMLTextAreaElement).value = next.privateKey;
+      if (this.options.onSubmitError) this.options.onSubmitError(error);
+      else {
+        const message = error instanceof Error ? error.message : String(error);
+        notify(t('auth.connectFailed', { message }), { variant: 'danger' });
+      }
+    }
   }
 }

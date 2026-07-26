@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { parseConnectionDraft, type ConnectionDraft } from '../../frontend/src/shared/connection-input';
+import {
+  connectionDraftAfterFailure,
+  parseConnectionDraft,
+  type ConnectionDraft,
+} from '../../frontend/src/shared/connection-input';
 
 function draft(overrides: Partial<ConnectionDraft> = {}): ConnectionDraft {
   return {
@@ -98,5 +102,22 @@ describe('parseConnectionDraft', () => {
         locationHint: 'wnam',
       },
     });
+  });
+});
+
+describe('connectionDraftAfterFailure', () => {
+  it('clears unremembered credentials while preserving connection identity fields', () => {
+    expect(connectionDraftAfterFailure(draft({
+      host: 'server.example.com', port: '2222', username: 'root',
+      password: 'secret-password', privateKey: 'secret-private-key',
+    }), false)).toEqual({
+      host: 'server.example.com', port: '2222', username: 'root',
+      authMethod: 'password', password: '', privateKey: '', locationHint: '',
+    });
+  });
+
+  it('keeps credentials that the user explicitly chose to remember', () => {
+    const input = draft({ password: 'secret-password' });
+    expect(connectionDraftAfterFailure(input, true)).toEqual(input);
   });
 });

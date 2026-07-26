@@ -25,6 +25,14 @@ export type ConnectionValidationResult =
       field: 'host' | 'port' | 'username' | 'password' | 'privateKey';
     };
 
+export function connectionDraftAfterFailure(
+  draft: ConnectionDraft,
+  remembered: boolean,
+): ConnectionDraft {
+  if (remembered) return draft;
+  return { ...draft, password: '', privateKey: '' };
+}
+
 export function parseConnectionDraft(draft: ConnectionDraft): ConnectionValidationResult {
   const rawHost = draft.host.trim();
   const host = rawHost.startsWith('[') && rawHost.endsWith(']')

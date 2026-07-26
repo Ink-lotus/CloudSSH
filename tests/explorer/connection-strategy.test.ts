@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  ConnectionPool,
   connectExplorerSSH,
   waitForSFTPAttachUrl,
+  type ConnectionPoolDependencies,
   type ExplorerSSHDependencies,
   type ExplorerTerminal,
 } from '../../frontend/src/explorer/connection-pool';
+import type { SFTPConnection, SFTPConnectionCallbacks } from '../../frontend/src/explorer/sftp-connection';
 import {
   requestFromDirectConfig,
   requestFromSavedServer,
@@ -117,6 +120,10 @@ describe('connectExplorerSSH', () => {
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toBe('authentication failed');
     expect((error as Error).message).not.toContain('SECRET-PRIVATE-KEY');
+
+    // Pool cleanup disconnects the terminal after connect() rejects.
+    terminal.disconnect();
+    await Promise.resolve();
   });
 
   it('stops waiting for session ready when aborted', async () => {
@@ -182,5 +189,161 @@ describe('waitForSFTPAttachUrl', () => {
 
     await rejected;
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+interface PoolHarness {
+  deps: ConnectionPoolDependencies;
+  mountRemoved: number;
+  hostRemoved: number;
+  terminalDisconnects: number;
+  terminalDisposals: number;
+  sftpDisposals: number;
+  finishSSH: () => void;
+  failSSH: (error: Error) => void;
+  setSFTPError: (message: string | null) => void;
+}
+
+function poolHarness(): PoolHarness {
+  let mountRemoved = 0;
+  let hostRemoved = 0;
+  let terminalDisconnects = 0;
+  let terminalDisposals = 0;
+  let sftpDisposals = 0;
+  let resolveSSH: (() => void) | null = null;
+  let rejectSSH: ((error: Error) => void) | null = null;
+  let sftpError: string | null = null;
+  const host = {
+    style: { cssText: '' },
+    appendChild: () => undefined,
+    remove: () => { hostRemoved += 1; },
+  } as unknown as HTMLElement;
+  const mount = {
+    id: '',
+    style: { cssText: '' },
+    remove: () => { mountRemoved += 1; },
+  } as unknown as HTMLElement;
+  const terminal = {
+    mount: () => undefined,
+    disconnect: () => { terminalDisconnects += 1; },
+    dispose: () => { terminalDisposals += 1; },
+    getSFTPWebSocketUrl: () => 'wss://example.test/sftp',
+  } as unknown as ExplorerTerminal;
+  const sftp = {
+    connect: (callbacks: SFTPConnectionCallbacks) => {
+      if (sftpError) callbacks.onError(sftpError);
+      else callbacks.onReady();
+    },
+    dispose: () => { sftpDisposals += 1; },
+    isReady: () => true,
+  } as unknown as SFTPConnection;
+
+  return {
+    deps: {
+      createHiddenHost: () => host,
+      createMount: (_host, id) => { mount.id = id; return mount; },
+      createTerminal: () => terminal,
+      connectSSH: () => new Promise<void>((resolve, reject) => {
+        resolveSSH = resolve;
+        rejectSSH = reject;
+      }),
+      waitForAttachUrl: async () => 'wss://example.test/sftp',
+      createSFTPConnection: () => sftp,
+    },
+    get mountRemoved() { return mountRemoved; },
+    get hostRemoved() { return hostRemoved; },
+    get terminalDisconnects() { return terminalDisconnects; },
+    get terminalDisposals() { return terminalDisposals; },
+    get sftpDisposals() { return sftpDisposals; },
+    finishSSH: () => resolveSSH?.(),
+    failSSH: (error) => rejectSSH?.(error),
+    setSFTPError: (message) => { sftpError = message; },
+  };
+}
+
+describe('ConnectionPool cleanup', () => {
+  it('releases the terminal and hidden mount when SSH fails', async () => {
+    const harness = poolHarness();
+    const pool = new ConnectionPool(harness.deps);
+    const request = requestFromDirectConfig({
+      host: 'ssh.example.com', port: 22, username: 'alice', password: 'secret',
+    }, 'ssh-failure');
+    const pending = pool.connect(request);
+
+    harness.failSSH(new Error('SSH failed'));
+
+    await expect(pending).rejects.toThrow('SSH failed');
+    expect(harness.terminalDisconnects).toBe(1);
+    expect(harness.terminalDisposals).toBe(1);
+    expect(harness.mountRemoved).toBe(1);
+    expect(pool.getAll()).toEqual([]);
+  });
+
+  it('releases both SFTP and SSH resources when SFTP initialization fails', async () => {
+    const harness = poolHarness();
+    harness.setSFTPError('SFTP unsupported');
+    const pool = new ConnectionPool(harness.deps);
+    const request = requestFromDirectConfig({
+      host: 'ssh.example.com', port: 22, username: 'alice', password: 'secret',
+    }, 'sftp-failure');
+    const pending = pool.connect(request);
+
+    harness.finishSSH();
+
+    await expect(pending).rejects.toThrow('SFTP unsupported');
+    expect(harness.sftpDisposals).toBe(1);
+    expect(harness.terminalDisposals).toBe(1);
+    expect(harness.mountRemoved).toBe(1);
+  });
+
+  it('shares one in-flight promise for concurrent connects with the same key', async () => {
+    const harness = poolHarness();
+    const pool = new ConnectionPool(harness.deps);
+    const request = requestFromDirectConfig({
+      host: 'ssh.example.com', port: 22, username: 'alice', password: 'secret',
+    }, 'shared');
+
+    const first = pool.connect(request);
+    const second = pool.connect(request);
+    expect(second).toBe(first);
+
+    harness.finishSSH();
+    await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    expect(pool.getAll()).toHaveLength(1);
+  });
+
+  it('allows a retry after a failed connect clears the in-flight entry', async () => {
+    const harness = poolHarness();
+    const pool = new ConnectionPool(harness.deps);
+    const request = requestFromDirectConfig({
+      host: 'ssh.example.com', port: 22, username: 'alice', password: 'secret',
+    }, 'retry');
+    const first = pool.connect(request);
+    harness.failSSH(new Error('first failed'));
+    await expect(first).rejects.toThrow('first failed');
+
+    const second = pool.connect(request);
+    expect(second).not.toBe(first);
+    harness.finishSSH();
+    await expect(second).resolves.toBeDefined();
+  });
+
+  it('drops direct request credentials when all connections are disposed', async () => {
+    const harness = poolHarness();
+    const pool = new ConnectionPool(harness.deps);
+    const request = requestFromDirectConfig({
+      host: 'ssh.example.com', port: 22, username: 'alice', password: 'secret-password',
+    }, 'dispose');
+    const pending = pool.connect(request);
+    harness.finishSSH();
+    await pending;
+    expect(pool.getRequest('direct:dispose')).toBe(request);
+
+    pool.disposeAll();
+
+    expect(pool.getRequest('direct:dispose')).toBeNull();
+    expect(pool.getAll()).toEqual([]);
+    expect(harness.sftpDisposals).toBe(1);
+    expect(harness.hostRemoved).toBe(1);
   });
 });

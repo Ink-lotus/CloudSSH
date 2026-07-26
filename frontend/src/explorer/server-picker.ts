@@ -73,8 +73,8 @@ export interface ServerPickerOptions {
   authenticated: boolean;
   authConfig: AuthConfig;
   connectedKeys: Set<ExplorerConnectionKey>;
-  onPickSaved: (request: ExplorerConnectionRequest) => void;
-  onSubmitDirect: (request: ExplorerConnectionRequest) => void;
+  onPickSaved: (request: ExplorerConnectionRequest) => void | Promise<void>;
+  onSubmitDirect: (request: ExplorerConnectionRequest) => void | Promise<void>;
   onSavedServersLoaded?: (requests: ExplorerConnectionRequest[]) => void;
   onLogin?: () => void;
   onError?: (message: string) => void;
@@ -136,7 +136,7 @@ export async function renderServerPicker(opts: ServerPickerOptions): Promise<() 
       </button>`).join('')}</div>`;
     servers.forEach((server) => {
       content.querySelector(`.ep-card[data-id="${server.id}"]`)?.addEventListener('click', () => {
-        opts.onPickSaved(requestFromSavedServer(server));
+        void opts.onPickSaved(requestFromSavedServer(server));
       });
     });
   };
@@ -147,6 +147,9 @@ export async function renderServerPicker(opts: ServerPickerOptions): Promise<() 
     directForm = new SSHConnectionForm(content, {
       authConfig: opts.authConfig,
       onSubmit: (config) => opts.onSubmitDirect(requestFromDirectConfig(config)),
+      onSubmitError: (error) => opts.onError?.(
+        error instanceof Error ? error.message : String(error),
+      ),
     });
   };
 

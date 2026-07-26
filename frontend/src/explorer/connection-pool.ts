@@ -39,30 +39,37 @@ export async function connectExplorerSSH(
   signal?: AbortSignal,
 ): Promise<void> {
   if (signal?.aborted) throw new Error('EXPLORER_CONNECT_ABORTED');
+  let abandonReady!: () => void;
   const ready = new Promise<void>((resolve, reject) => {
     const cleanup = (): void => signal?.removeEventListener('abort', onAbort);
     const onAbort = (): void => { cleanup(); reject(new Error('EXPLORER_CONNECT_ABORTED')); };
+    abandonReady = (): void => { cleanup(); resolve(); };
     terminal.setSessionReadyHandler(() => { cleanup(); resolve(); });
     terminal.setSessionClosedHandler(() => { cleanup(); reject(new Error('SSH_SESSION_CLOSED')); });
     signal?.addEventListener('abort', onAbort, { once: true });
   });
 
-  if (request.connect.source === 'saved') {
-    const wsUrl = await deps.connectServerWs(request.connect.serverId);
-    const ws = deps.createWebSocket(wsUrl);
-    ws.binaryType = 'arraybuffer';
-    terminal.connectWithWebSocket(ws, {
-      host: request.target.host,
-      port: request.target.port,
-    });
-  } else {
-    const config = request.connect.config;
-    const knownFingerprint = await deps.loadKnownFingerprint(config.host, config.port);
-    const expectedFingerprint = knownFingerprint || config.expectedFingerprint;
-    await terminal.connect({
-      ...config,
-      ...(expectedFingerprint ? { expectedFingerprint } : {}),
-    });
+  try {
+    if (request.connect.source === 'saved') {
+      const wsUrl = await deps.connectServerWs(request.connect.serverId);
+      const ws = deps.createWebSocket(wsUrl);
+      ws.binaryType = 'arraybuffer';
+      terminal.connectWithWebSocket(ws, {
+        host: request.target.host,
+        port: request.target.port,
+      });
+    } else {
+      const config = request.connect.config;
+      const knownFingerprint = await deps.loadKnownFingerprint(config.host, config.port);
+      const expectedFingerprint = knownFingerprint || config.expectedFingerprint;
+      await terminal.connect({
+        ...config,
+        ...(expectedFingerprint ? { expectedFingerprint } : {}),
+      });
+    }
+  } catch (error) {
+    abandonReady();
+    throw error;
   }
 
   await ready;
@@ -139,6 +146,44 @@ export interface PooledConnection {
   mountEl: HTMLElement;
 }
 
+export interface ConnectionPoolDependencies {
+  createHiddenHost(): HTMLElement;
+  createMount(host: HTMLElement, id: string): HTMLElement;
+  createTerminal(mountId: string): ExplorerTerminal & { mount(): void };
+  connectSSH(
+    request: ExplorerConnectionRequest,
+    terminal: ExplorerTerminal,
+    signal?: AbortSignal,
+  ): Promise<void>;
+  waitForAttachUrl(
+    getUrl: () => string | null,
+    options?: SFTPAttachWaitOptions,
+  ): Promise<string>;
+  createSFTPConnection(getUrl: () => string | null): SFTPConnection;
+}
+
+const defaultPoolDependencies: ConnectionPoolDependencies = {
+  createHiddenHost: () => {
+    const host = document.createElement('div');
+    host.style.cssText = 'position:absolute;left:-9999px;top:0;width:0;height:0;overflow:hidden;';
+    document.body.appendChild(host);
+    return host;
+  },
+  createMount: (host, id) => {
+    const mount = document.createElement('div');
+    mount.id = id;
+    mount.style.cssText = 'width:400px;height:300px;';
+    host.appendChild(mount);
+    return mount;
+  },
+  createTerminal: (mountId) => new SSHTerminal(mountId),
+  connectSSH: (request, terminal, signal) => connectExplorerSSH(
+    request, terminal, defaultSSHDependencies, signal,
+  ),
+  waitForAttachUrl: waitForSFTPAttachUrl,
+  createSFTPConnection: (getUrl) => new SFTPConnection(getUrl),
+};
+
 export class ConnectionPool {
   private pool = new Map<ExplorerConnectionKey, PooledConnection>();
   private refs = new ConnectionRefCounter();
@@ -147,10 +192,8 @@ export class ConnectionPool {
   private connecting = new Map<ExplorerConnectionKey, Promise<SFTPConnection>>();
   private mountSeq = 0;
 
-  constructor() {
-    this.hiddenHost = document.createElement('div');
-    this.hiddenHost.style.cssText = 'position:absolute;left:-9999px;top:0;width:0;height:0;overflow:hidden;';
-    document.body.appendChild(this.hiddenHost);
+  constructor(private deps: ConnectionPoolDependencies = defaultPoolDependencies) {
+    this.hiddenHost = deps.createHiddenHost();
   }
 
   connect(request: ExplorerConnectionRequest, signal?: AbortSignal): Promise<SFTPConnection> {
@@ -170,23 +213,20 @@ export class ConnectionPool {
     signal?: AbortSignal,
   ): Promise<SFTPConnection> {
     const { target } = request;
-    const mountEl = document.createElement('div');
-    mountEl.id = `explorer-conn-${++this.mountSeq}`;
-    mountEl.style.cssText = 'width:400px;height:300px;';
-    this.hiddenHost.appendChild(mountEl);
-    const terminal = new SSHTerminal(mountEl.id);
+    const mountEl = this.deps.createMount(this.hiddenHost, `explorer-conn-${++this.mountSeq}`);
+    const terminal = this.deps.createTerminal(mountEl.id);
     terminal.mount();
     let connection: SFTPConnection | null = null;
 
     try {
       if (signal?.aborted) throw new Error('SFTP_ATTACH_ABORTED');
-      await connectExplorerSSH(request, terminal, defaultSSHDependencies, signal);
-      const attachUrl = await waitForSFTPAttachUrl(
+      await this.deps.connectSSH(request, terminal, signal);
+      const attachUrl = await this.deps.waitForAttachUrl(
         () => terminal.getSFTPWebSocketUrl(),
         { signal },
       );
 
-      connection = new SFTPConnection(() => attachUrl);
+      connection = this.deps.createSFTPConnection(() => attachUrl);
       await new Promise<void>((resolve, reject) => {
         connection!.connect({
           onReady: () => resolve(),
@@ -195,7 +235,13 @@ export class ConnectionPool {
         });
       });
 
-      this.pool.set(target.key, { request, target, terminal, connection, mountEl });
+      this.pool.set(target.key, {
+        request,
+        target,
+        terminal: terminal as SSHTerminal,
+        connection,
+        mountEl,
+      });
       this.notify();
       return connection;
     } catch (error) {
