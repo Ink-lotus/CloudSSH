@@ -323,8 +323,8 @@ describe('安全 — cf_verified 签名伪造', () => {
     );
     const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(expires));
     const sigHex = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
-    // 篡改：把首个字符 a 改成 b（破坏签名）
-    const tamperedSig = 'b' + sigHex.slice(1);
+    // 篡改首个十六进制字符，并确保它与原签名不同。
+    const tamperedSig = (sigHex[0] === 'b' ? 'a' : 'b') + sigHex.slice(1);
     const tamperedToken = `${expires}:${tamperedSig}`;
 
     // 需要直接调内部函数测——通过路由间接测：
