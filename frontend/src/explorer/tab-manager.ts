@@ -29,6 +29,21 @@ export function nextActiveAfterClose(
   return remaining[Math.min(idx, remaining.length - 1)];
 }
 
+/** 拖出标签的事务提交：新窗口 ready 后才关闭原标签，失败则回滚新窗口。 */
+export async function completeDetachedTab(
+  detachedReady: Promise<void>,
+  closeOriginal: () => void,
+  closeDetached: () => void,
+): Promise<void> {
+  try {
+    await detachedReady;
+    closeOriginal();
+  } catch (error) {
+    closeDetached();
+    throw error;
+  }
+}
+
 export class TabManager {
   private tabs: Tab[] = [];
   private activeId: string | null = null;

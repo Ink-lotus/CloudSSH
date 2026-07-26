@@ -1,8 +1,10 @@
 import { WindowManager, WindowHandle } from '../wm/window-manager';
-import { SSHTerminal } from '../terminal';
+import { loadKnownFingerprint, SSHTerminal, type SSHConnectionConfig } from '../terminal';
 import { notify } from '../ui-feedback';
 import type { ShellContext } from '../shell/types';
 import { createSoftKeyBar } from '../mobile/soft-key-bar';
+import type { ExplorerConnectionRequest } from '../explorer/connection-target';
+import { connectServerWs } from '../shared/server-data';
 
 let seq = 0;
 
@@ -31,6 +33,16 @@ function hostKey(hostInfo?: { host: string; port: number }): string | null {
   return hostInfo ? `${hostInfo.host}:${hostInfo.port}` : null;
 }
 
+export function sendInitialCommandOnReady(
+  setReadyHandler: (handler: () => void) => void,
+  send: (message: string) => void,
+  command: string,
+): void {
+  setReadyHandler(() => {
+    setTimeout(() => send(command + '\n'), 300);
+  });
+}
+
 /**
  * 在桌面上打开一个终端窗口，装配 SSHTerminal，返回句柄。
  * 不负责建立连接——由调用者决定 connect(config)（匿名）或 connectWithWebSocket(ws)（服务器列表）。
@@ -57,12 +69,18 @@ export function createTerminalWindow(
 
   const terminal = new SSHTerminal(containerId);
 
-  terminal.setSessionReadyHandler(() => {
+  const onReady = () => {
     win.setDisconnected(false);
-    if (opts.initialCommand) {
-      setTimeout(() => terminal.sendWebSocketMessage(opts.initialCommand + '\n'), 300);
-    }
-  });
+  };
+  if (opts.initialCommand) {
+    sendInitialCommandOnReady(
+      (handler) => terminal.setSessionReadyHandler(() => { onReady(); handler(); }),
+      (message) => terminal.sendWebSocketMessage(message),
+      opts.initialCommand,
+    );
+  } else {
+    terminal.setSessionReadyHandler(onReady);
+  }
   terminal.setSessionClosedHandler(() => {
     win.setDisconnected(true);
   });
@@ -122,4 +140,87 @@ export function openTerminalFromWsUrl(
   const ws = new WebSocket(opts.wsUrl);
   ws.binaryType = 'arraybuffer';
   terminal.connectWithWebSocket(ws, opts.hostInfo);
+}
+
+export interface ExplorerDirectTerminal {
+  connect(config: SSHConnectionConfig): Promise<void>;
+}
+
+export interface ExplorerTerminalOpenDependencies {
+  connectServerWs(serverId: number): Promise<string>;
+  loadKnownFingerprint(host: string, port: number): Promise<string | null>;
+  openSavedTerminal(options: {
+    wsUrl: string;
+    name: string;
+    hostInfo: { host: string; port: number };
+    initialCommand: string;
+  }): void;
+  createDirectTerminal(options: {
+    name: string;
+    hostInfo: { host: string; port: number };
+    initialCommand: string;
+  }): { terminal: ExplorerDirectTerminal; close(): void };
+}
+
+function redactConnectionError(error: unknown, config: SSHConnectionConfig): Error {
+  let message = error instanceof Error ? error.message : String(error);
+  for (const secret of [config.password, config.privateKey]) {
+    if (secret) message = message.split(secret).join('[redacted]');
+  }
+  return new Error(message);
+}
+
+/** 按 saved/direct 来源打开新的可见终端。 */
+export async function openExplorerTerminal(
+  request: ExplorerConnectionRequest,
+  initialCommand: string,
+  deps: ExplorerTerminalOpenDependencies,
+): Promise<void> {
+  const { target } = request;
+  if (request.connect.source === 'saved') {
+    const wsUrl = await deps.connectServerWs(request.connect.serverId);
+    deps.openSavedTerminal({
+      wsUrl,
+      name: `${target.name}: ${initialCommand}`,
+      hostInfo: { host: target.host, port: target.port },
+      initialCommand,
+    });
+    return;
+  }
+
+  const config = request.connect.config;
+  const opened = deps.createDirectTerminal({
+    name: `${target.name}: ${initialCommand}`,
+    hostInfo: { host: target.host, port: target.port },
+    initialCommand,
+  });
+  try {
+    const knownFingerprint = await deps.loadKnownFingerprint(config.host, config.port);
+    const expectedFingerprint = knownFingerprint || config.expectedFingerprint;
+    await opened.terminal.connect({
+      ...config,
+      ...(expectedFingerprint ? { expectedFingerprint } : {}),
+    });
+  } catch (error) {
+    opened.close();
+    throw redactConnectionError(error, config);
+  }
+}
+
+/** 资源管理器使用的浏览器依赖装配。 */
+export function openExplorerTerminalWindow(
+  wm: WindowManager,
+  request: ExplorerConnectionRequest,
+  initialCommand: string,
+  ctx?: ShellContext,
+): Promise<void> {
+  return openExplorerTerminal(request, initialCommand, {
+    connectServerWs,
+    loadKnownFingerprint,
+    openSavedTerminal: (options) => openTerminalFromWsUrl(wm, options, ctx),
+    createDirectTerminal: (options) => {
+      const opened = createTerminalWindow(wm, options, ctx);
+      return { terminal: opened.terminal, close: () => opened.win.close() };
+    },
+  });
 }

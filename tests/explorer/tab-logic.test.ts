@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { tabTitle, nextActiveAfterClose, TabManager } from '../../frontend/src/explorer/tab-manager';
+import {
+  completeDetachedTab,
+  tabTitle,
+  nextActiveAfterClose,
+  TabManager,
+} from '../../frontend/src/explorer/tab-manager';
 import type { ConnectionPool } from '../../frontend/src/explorer/connection-pool';
 import { requestFromSavedServer } from '../../frontend/src/explorer/connection-target';
 
@@ -75,5 +80,40 @@ describe('TabManager connection key lifecycle', () => {
     await expect(pending).rejects.toThrow('EXPLORER_CONNECT_ABORTED');
     expect(acquired).toBe(false);
     expect(tabs.count()).toBe(0);
+  });
+});
+
+describe('completeDetachedTab', () => {
+  it('closes the original tab only after the detached window is ready', async () => {
+    let resolveReady!: () => void;
+    const ready = new Promise<void>((resolve) => { resolveReady = resolve; });
+    let originalClosed = false;
+    let detachedClosed = false;
+    const pending = completeDetachedTab(
+      ready,
+      () => { originalClosed = true; },
+      () => { detachedClosed = true; },
+    );
+
+    expect(originalClosed).toBe(false);
+    resolveReady();
+    await pending;
+
+    expect(originalClosed).toBe(true);
+    expect(detachedClosed).toBe(false);
+  });
+
+  it('closes the detached window and keeps the original tab when connection fails', async () => {
+    let originalClosed = false;
+    let detachedClosed = false;
+
+    await expect(completeDetachedTab(
+      Promise.reject(new Error('connection failed')),
+      () => { originalClosed = true; },
+      () => { detachedClosed = true; },
+    )).rejects.toThrow('connection failed');
+
+    expect(originalClosed).toBe(false);
+    expect(detachedClosed).toBe(true);
   });
 });

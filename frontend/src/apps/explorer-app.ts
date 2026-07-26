@@ -3,13 +3,12 @@
 import type { WindowManager } from '../wm/window-manager';
 import type { ShellContext } from '../shell/types';
 import { ConnectionPool } from '../explorer/connection-pool';
-import { TabManager } from '../explorer/tab-manager';
+import { completeDetachedTab, TabManager } from '../explorer/tab-manager';
 import { DesktopExplorer, type ExplorerUICtx } from '../explorer/desktop-explorer';
 import { MobileExplorer, type MobileUICtx } from '../explorer/mobile-explorer';
 import { renderServerPicker } from '../explorer/server-picker';
 import type { ActionsContext } from '../explorer/explorer-actions';
-import { connectServerWs } from '../shared/server-data';
-import { openTerminalFromWsUrl } from './terminal-app';
+import { openExplorerTerminalWindow } from './terminal-app';
 import { notify } from '../ui-feedback';
 import { t } from '../i18n';
 import {
@@ -26,6 +25,11 @@ export interface OpenExplorerOptions {
   onLogin?: () => void;
 }
 
+export interface OpenExplorerResult {
+  ready: Promise<void>;
+  close: () => void;
+}
+
 export function openExplorerWindow(
   wm: WindowManager,
   ctx?: ShellContext,
@@ -33,7 +37,7 @@ export function openExplorerWindow(
     authenticated: false,
     authConfig: { turnstileEnabled: false, sitekey: '', githubAuthEnabled: false },
   },
-): void {
+): OpenExplorerResult {
   const win = wm.openWindow({
     title: t('explorer.title'), icon: 'folder',
     width: 900, height: 560, minWidth: 420, minHeight: 320,
@@ -45,20 +49,9 @@ export function openExplorerWindow(
 
   const actionsCtx: ActionsContext = {
     openInTerminal: (request, command) => {
-      if (request.connect.source !== 'saved') return;
-      const serverId = request.connect.serverId;
-      void (async () => {
-        try {
-          const wsUrl = await connectServerWs(serverId);
-          openTerminalFromWsUrl(
-            wm,
-            { wsUrl, name: `${request.target.name}: ${command}`, hostInfo: { host: request.target.host, port: request.target.port }, initialCommand: command },
-            ctx,
-          );
-        } catch (e) {
-          notify(e instanceof Error ? e.message : String(e), { variant: 'danger' });
-        }
-      })();
+      void openExplorerTerminalWindow(wm, request, command, ctx).catch((error) => {
+        notify(error instanceof Error ? error.message : String(error), { variant: 'danger' });
+      });
     },
     notify: (message, variant) => notify(message, { variant: variant ?? 'info' }),
   };
@@ -72,6 +65,13 @@ export function openExplorerWindow(
   let desktop: DesktopExplorer | null = null;
   let mobile: MobileExplorer | null = null;
   let disposePicker: (() => void) | null = null;
+  let resolveReady!: () => void;
+  let rejectReady!: (error: unknown) => void;
+  let readySettled = false;
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = () => { readySettled = true; resolve(); };
+    rejectReady = (error) => { readySettled = true; reject(error); };
+  });
 
   const connectAndTab = async (request: ExplorerConnectionRequest): Promise<void> => {
     try {
@@ -79,8 +79,10 @@ export function openExplorerWindow(
       if (abortController.signal.aborted) return;
       requests.set(request.target.key, request);
       mountUI();
+      if (!readySettled) resolveReady();
     } catch (e) {
       if (abortController.signal.aborted) return;
+      if (options.initialRequest && !readySettled) rejectReady(e);
       notify(e instanceof Error ? e.message : String(e), { title: t('explorer.connectFailed'), variant: 'danger' });
       showPicker();
     }
@@ -131,8 +133,14 @@ export function openExplorerWindow(
       if (!tab) return;
       const request = pool.getRequest(tab.connectionKey);
       if (!request) return;
-      tabs.closeTab(tabId);
-      openExplorerWindow(wm, ctx, { ...options, initialRequest: request });
+      const detached = openExplorerWindow(wm, ctx, { ...options, initialRequest: request });
+      void completeDetachedTab(
+        detached.ready,
+        () => tabs.closeTab(tabId),
+        detached.close,
+      ).catch((error) => {
+        notify(error instanceof Error ? error.message : String(error), { variant: 'danger' });
+      });
     },
     onDisconnectServer: (connectionKey) => pool.disconnect(connectionKey),
   };
@@ -156,6 +164,9 @@ export function openExplorerWindow(
   const offMode = ctx?.onModeChange(() => { if (tabs.count() > 0) mountUI(); });
   win.onBack(() => (mobile ? mobile.onBack() : false));
   win.onClose(() => {
+    if (options.initialRequest && !readySettled) {
+      rejectReady(new Error('EXPLORER_WINDOW_CLOSED'));
+    }
     abortController.abort();
     offMode?.();
     disposePicker?.();
@@ -166,6 +177,8 @@ export function openExplorerWindow(
 
   void (async () => {
     if (options.initialRequest) await connectAndTab(options.initialRequest);
-    else showPicker();
+    else { showPicker(); resolveReady(); }
   })();
+
+  return { ready, close: () => win.close() };
 }
