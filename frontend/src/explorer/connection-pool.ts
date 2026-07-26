@@ -1,6 +1,6 @@
 // 多服务器 SFTP 连接池 —— 隐藏 SSHTerminal + SFTPConnection + 引用计数
 
-import { SSHTerminal } from '../terminal';
+import { loadKnownFingerprint, SSHTerminal, type SSHConnectionConfig } from '../terminal';
 import { SFTPConnection } from './sftp-connection';
 import { connectServerWs } from '../shared/server-data';
 import type {
@@ -8,6 +8,107 @@ import type {
   ExplorerConnectionRequest,
   ExplorerTarget,
 } from './connection-target';
+
+export interface ExplorerTerminal {
+  setSessionReadyHandler(handler: () => void): void;
+  setSessionClosedHandler(handler: (event: CloseEvent) => void): void;
+  connect(config: SSHConnectionConfig): Promise<void>;
+  connectWithWebSocket(ws: WebSocket, hostInfo?: { host: string; port: number }): void;
+  getSFTPWebSocketUrl(): string | null;
+  disconnect(): void;
+  dispose(): void;
+}
+
+export interface ExplorerSSHDependencies {
+  connectServerWs(serverId: number): Promise<string>;
+  loadKnownFingerprint(host: string, port: number): Promise<string | null>;
+  createWebSocket(url: string): WebSocket;
+}
+
+const defaultSSHDependencies: ExplorerSSHDependencies = {
+  connectServerWs,
+  loadKnownFingerprint,
+  createWebSocket: (url) => new WebSocket(url),
+};
+
+/** 建立资源管理器的 SSH 主连接，并等待 shell session ready。 */
+export async function connectExplorerSSH(
+  request: ExplorerConnectionRequest,
+  terminal: ExplorerTerminal,
+  deps: ExplorerSSHDependencies = defaultSSHDependencies,
+): Promise<void> {
+  const ready = new Promise<void>((resolve, reject) => {
+    terminal.setSessionReadyHandler(resolve);
+    terminal.setSessionClosedHandler(() => reject(new Error('SSH_SESSION_CLOSED')));
+  });
+
+  if (request.connect.source === 'saved') {
+    const wsUrl = await deps.connectServerWs(request.connect.serverId);
+    const ws = deps.createWebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+    terminal.connectWithWebSocket(ws, {
+      host: request.target.host,
+      port: request.target.port,
+    });
+  } else {
+    const config = request.connect.config;
+    const knownFingerprint = await deps.loadKnownFingerprint(config.host, config.port);
+    const expectedFingerprint = knownFingerprint || config.expectedFingerprint;
+    await terminal.connect({
+      ...config,
+      ...(expectedFingerprint ? { expectedFingerprint } : {}),
+    });
+  }
+
+  await ready;
+}
+
+export interface SFTPAttachWaitOptions {
+  signal?: AbortSignal;
+  intervalMs?: number;
+  timeoutMs?: number;
+}
+
+const SFTP_ATTACH_INTERVAL_MS = 50;
+const SFTP_ATTACH_TIMEOUT_MS = 5000;
+
+/** 等待主连接下发 sftp_attach URL；始终有超时且取消后不遗留 timer。 */
+export function waitForSFTPAttachUrl(
+  getUrl: () => string | null,
+  options: SFTPAttachWaitOptions = {},
+): Promise<string> {
+  if (options.signal?.aborted) return Promise.reject(new Error('SFTP_ATTACH_ABORTED'));
+  const existing = getUrl();
+  if (existing) return Promise.resolve(existing);
+
+  const intervalMs = options.intervalMs ?? SFTP_ATTACH_INTERVAL_MS;
+  const timeoutMs = options.timeoutMs ?? SFTP_ATTACH_TIMEOUT_MS;
+
+  return new Promise<string>((resolve, reject) => {
+    const startedAt = Date.now();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const cleanup = (): void => {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+      options.signal?.removeEventListener('abort', onAbort);
+    };
+    const finish = (url: string): void => { cleanup(); resolve(url); };
+    const fail = (code: string): void => { cleanup(); reject(new Error(code)); };
+    const onAbort = (): void => fail('SFTP_ATTACH_ABORTED');
+    const poll = (): void => {
+      if (options.signal?.aborted) { onAbort(); return; }
+      const url = getUrl();
+      if (url) { finish(url); return; }
+      const elapsed = Date.now() - startedAt;
+      if (elapsed >= timeoutMs) { fail('SFTP_ATTACH_TIMEOUT'); return; }
+      timer = setTimeout(poll, Math.min(intervalMs, timeoutMs - elapsed));
+    };
+
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+    timer = setTimeout(poll, Math.min(intervalMs, timeoutMs));
+  });
+}
 
 /** 引用计数纯逻辑（可单测） */
 export class ConnectionRefCounter {
@@ -30,6 +131,7 @@ export interface PooledConnection {
   target: ExplorerTarget;
   terminal: SSHTerminal;
   connection: SFTPConnection;
+  mountEl: HTMLElement;
 }
 
 export class ConnectionPool {
@@ -38,6 +140,7 @@ export class ConnectionPool {
   private changeCbs = new Set<() => void>();
   private hiddenHost: HTMLElement;
   private connecting = new Map<ExplorerConnectionKey, Promise<SFTPConnection>>();
+  private mountSeq = 0;
 
   constructor() {
     this.hiddenHost = document.createElement('div');
@@ -45,51 +148,58 @@ export class ConnectionPool {
     document.body.appendChild(this.hiddenHost);
   }
 
-  connect(request: ExplorerConnectionRequest): Promise<SFTPConnection> {
+  connect(request: ExplorerConnectionRequest, signal?: AbortSignal): Promise<SFTPConnection> {
     const key = request.target.key;
     const existing = this.pool.get(key);
     if (existing) return Promise.resolve(existing.connection);
     const inflight = this.connecting.get(key);
     if (inflight) return inflight;
 
-    const p = this.doConnect(request).finally(() => this.connecting.delete(key));
+    const p = this.doConnect(request, signal).finally(() => this.connecting.delete(key));
     this.connecting.set(key, p);
     return p;
   }
 
-  private async doConnect(request: ExplorerConnectionRequest): Promise<SFTPConnection> {
-    if (request.connect.source !== 'saved') {
-      throw new Error('Direct connections are not supported yet');
-    }
+  private async doConnect(
+    request: ExplorerConnectionRequest,
+    signal?: AbortSignal,
+  ): Promise<SFTPConnection> {
     const { target } = request;
     const mountEl = document.createElement('div');
-    mountEl.id = `explorer-conn-${request.connect.serverId}`;
+    mountEl.id = `explorer-conn-${++this.mountSeq}`;
     mountEl.style.cssText = 'width:400px;height:300px;';
     this.hiddenHost.appendChild(mountEl);
     const terminal = new SSHTerminal(mountEl.id);
     terminal.mount();
+    let connection: SFTPConnection | null = null;
 
-    const wsUrl = await connectServerWs(request.connect.serverId);
-    const ws = new WebSocket(wsUrl);
-    ws.binaryType = 'arraybuffer';
-    await new Promise<void>((resolve, reject) => {
-      terminal.setSessionReadyHandler(() => resolve());
-      terminal.setSessionClosedHandler(() => reject(new Error('主连接已关闭')));
-      terminal.connectWithWebSocket(ws, { host: target.host, port: target.port });
-    });
+    try {
+      if (signal?.aborted) throw new Error('SFTP_ATTACH_ABORTED');
+      await connectExplorerSSH(request, terminal);
+      const attachUrl = await waitForSFTPAttachUrl(
+        () => terminal.getSFTPWebSocketUrl(),
+        { signal },
+      );
 
-    const connection = new SFTPConnection(() => terminal.getSFTPWebSocketUrl());
-    await new Promise<void>((resolve, reject) => {
-      connection.connect({
-        onReady: () => resolve(),
-        onError: (e) => reject(new Error(e)),
-        onDisconnect: () => this.notify(),
+      connection = new SFTPConnection(() => attachUrl);
+      await new Promise<void>((resolve, reject) => {
+        connection!.connect({
+          onReady: () => resolve(),
+          onError: (error) => reject(new Error(error)),
+          onDisconnect: () => this.notify(),
+        });
       });
-    });
 
-    this.pool.set(target.key, { request, target, terminal, connection });
-    this.notify();
-    return connection;
+      this.pool.set(target.key, { request, target, terminal, connection, mountEl });
+      this.notify();
+      return connection;
+    } catch (error) {
+      connection?.dispose();
+      terminal.disconnect();
+      terminal.dispose();
+      mountEl.remove();
+      throw error;
+    }
   }
 
   acquire(connectionKey: ExplorerConnectionKey): void { this.refs.acquire(connectionKey); }
@@ -114,9 +224,7 @@ export class ConnectionPool {
     p.connection.dispose();
     p.terminal.disconnect();
     p.terminal.dispose();
-    const serverId = p.request.connect.source === 'saved' ? p.request.connect.serverId : null;
-    const el = serverId === null ? null : document.getElementById(`explorer-conn-${serverId}`);
-    el?.remove();
+    p.mountEl.remove();
     this.pool.delete(connectionKey);
     this.notify();
   }
