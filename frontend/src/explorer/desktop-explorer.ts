@@ -161,12 +161,21 @@ export class DesktopExplorer {
     return segs.join('<span class="text-on-surface-variant mx-0.5">/</span>');
   }
 
+  private deduplicateTargets(targets: ExplorerTarget[]): ExplorerTarget[] {
+    const seen = new Map<string, ExplorerTarget>();
+    for (const t of targets) {
+      const id = `${t.username}@${t.host}:${t.port}`;
+      if (!seen.has(id) || this.pool.isConnected(t.key)) seen.set(id, t);
+    }
+    return [...seen.values()];
+  }
+
   // ---- 目录树 ----
   private renderTree(): void {
     const tree = this.root.querySelector('#ex-tree') as HTMLElement;
     if (!tree) return;
     const active = this.tabs.getActiveTab();
-    tree.innerHTML = this.ui.allTargets().map((target) => {
+    tree.innerHTML = this.deduplicateTargets(this.ui.allTargets()).map((target) => {
       const key = target.key;
       const connected = this.pool.isConnected(key);
       const dot = connected ? '<span class="w-1.5 h-1.5 rounded-full bg-primary-container"></span>' : '<span class="w-1.5 h-1.5 rounded-full border border-outline-variant"></span>';
@@ -184,6 +193,10 @@ export class DesktopExplorer {
     tree.querySelectorAll('.ex-srv').forEach((el) => el.addEventListener('click', async (e) => {
       if ((e.target as HTMLElement).classList.contains('ex-srv-toggle')) return;
       const key = (el as HTMLElement).dataset.key as ExplorerConnectionKey;
+      if (this.pool.isConnected(key)) {
+        const tab = this.tabs.getAllTabs().find((t) => t.connectionKey === key);
+        if (tab) { this.tabs.switchTab(tab.id); return; }
+      }
       const target = this.ui.allTargets().find((item) => item.key === key);
       if (target) this.ui.onConnectTarget(target);
     }));
@@ -197,7 +210,12 @@ export class DesktopExplorer {
       const path = (el as HTMLElement).dataset.path!;
       el.addEventListener('click', (e) => {
         if ((e.target as HTMLElement).classList.contains('ex-tnode-toggle')) return;
-        if (active && active.connectionKey === key) void active.actions.navigate(path);
+        if (active && active.connectionKey === key) {
+          void active.actions.navigate(path);
+        } else {
+          const tab = this.tabs.getAllTabs().find((t) => t.connectionKey === key);
+          if (tab) { this.tabs.switchTab(tab.id); void tab.actions.navigate(path); }
+        }
       });
     });
     tree.querySelectorAll('.ex-tnode-toggle').forEach((el) => el.addEventListener('click', async (e) => {
