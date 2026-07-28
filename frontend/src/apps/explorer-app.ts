@@ -110,8 +110,10 @@ export function openExplorerWindow(
         } catch { /* 保留选择器以便重试 */ }
       },
       onSubmitDirect: async (request) => {
-        await connectAndTab(request);
-        pickerLifecycle.dismiss(layer);
+        try {
+          await connectAndTab(request);
+          pickerLifecycle.dismiss(layer);
+        } catch { /* 保留选择器以便重试 */ }
       },
       onLogin: options.onLogin,
       onError: (m) => notify(m, { variant: 'danger' }),

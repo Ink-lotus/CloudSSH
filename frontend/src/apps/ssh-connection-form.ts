@@ -272,7 +272,7 @@ export class SSHConnectionForm {
         port: String(config.port),
         username: config.username,
         password: config.password || '',
-        privateKey: config.privateKey,
+        privateKey: config.privateKey || '',
         authMethod: config.authMethod || 'password',
       });
     }
